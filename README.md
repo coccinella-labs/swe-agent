@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Coccinella-Labs/swe-agent/main/.github/assets/thumbnail.png" alt="swe-agent" width="100%">
+</p>
+
 # SWE Agent - Emberlamp
 
 Software engineering agent for emberlamp organization with emberlamp repos awareness.
