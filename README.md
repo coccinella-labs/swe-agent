@@ -2,24 +2,24 @@
   <img src="https://raw.githubusercontent.com/Coccinella-Labs/swe-agent/main/.github/assets/thumbnail.png" alt="swe-agent" width="100%">
 </p>
 
-# SWE Agent - Emberlamp
+# SWE Agent - Coccinella Labs
 
-Software engineering agent for emberlamp organization with emberlamp repos awareness.
+Software engineering agent for coccinella-labs organization with coccinella-labs repos awareness.
 
 ## Overview
 
-This agent knows all emberlamp repositories and can clone them to /tmp/emberlamp/ for operations.
+This agent knows all coccinella-labs repositories and can clone them to /tmp/coccinella-labs/ for operations.
 
 ## Features
 
-- Loads repos dynamically from emberlamp/config
-- Detects cloned repos in /tmp/emberlamp/
-- Loads skills from emberlamp/skills
+- Loads repos dynamically from coccinella-labs/config
+- Detects cloned repos in /tmp/coccinella-labs/
+- Loads skills from coccinella-labs/skills
 - CLI for repo management
 
 ## Workflows
 
-All 14 emberlamp repos have five workflows:
+All 14 coccinella-labs repos have five workflows:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
@@ -50,9 +50,9 @@ docs: update readme       # → no release
 
 **Manual trigger (any commit type):**
 ```bash
-gh workflow run release.yml -f version=patch --repo emberlamp/repo
-gh workflow run release.yml -f version=minor --repo emberlamp/repo
-gh workflow run release.yml -f version=major --repo emberlamp/repo
+gh workflow run release.yml -f version=patch --repo coccinella-labs/repo
+gh workflow run release.yml -f version=minor --repo coccinella-labs/repo
+gh workflow run release.yml -f version=major --repo coccinella-labs/repo
 ```
 
 ### Release Workflow Fixes
@@ -93,8 +93,8 @@ During development, we encountered and fixed several issues:
 ```bash
 # Check tags vs releases are in sync
 for repo in general license react-template gitkeep warnings json-repo gh-pin-repo config swe-agent cli bot skills hub; do
-  tags=$(gh api repos/emberlamp/$repo/tags --jq '.[].name' | head -1)
-  releases=$(gh api repos/emberlamp/$repo/releases --jq '.[0].tag_name')
+  tags=$(gh api repos/coccinella-labs/$repo/tags --jq '.[].name' | head -1)
+  releases=$(gh api repos/coccinella-labs/$repo/releases --jq '.[0].tag_name')
   if [ "$tags" = "$releases" ]; then
     echo "$repo: ✅ $tags"
   else
@@ -132,8 +132,8 @@ All repos have an automation workflow that runs daily and on-demand:
 
 **Usage:**
 ```bash
-gh workflow run automation.yml -f action=sync --repo emberlamp/repo
-gh workflow run automation.yml -f action=report --repo emberlamp/repo
+gh workflow run automation.yml -f action=sync --repo coccinella-labs/repo
+gh workflow run automation.yml -f action=report --repo coccinella-labs/repo
 ```
 
 **Release workflow file:**
@@ -165,7 +165,7 @@ jobs:
 Workflows added to all repos:
 
 ```bash
-$ for dir in /tmp/emberlamp/*/; do
+$ for dir in /tmp/coccinella-labs/*/; do
     repo=$(basename "$dir")
     mkdir -p "$dir/.github/workflows"
     cp workflows/*.yml "$dir/.github/workflows/"
@@ -183,23 +183,23 @@ Added workflows to react-template
 Added workflows to skills
 Added workflows to swe-agent
 Added workflows to warnings
-To https://github.com/emberlamp/general.git
-To https://github.com/emberlamp/skills.git
-To https://github.com/emberlamp/gh-pin-repo.git
-To https://github.com/emberlamp/bot.git
-To https://github.com/emberlamp/react-template.git
-To https://github.com/emberlamp/warnings.git
-To https://github.com/emberlamp/cli.git
-To https://github.com/emberlamp/json-repo.git
-To https://github.com/emberlamp/config.git
-To https://github.com/emberlamp/license.git
-To https://github.com/emberlamp/gitkeep.git
+To https://github.com/coccinella-labs/general.git
+To https://github.com/coccinella-labs/skills.git
+To https://github.com/coccinella-labs/gh-pin-repo.git
+To https://github.com/coccinella-labs/bot.git
+To https://github.com/coccinella-labs/react-template.git
+To https://github.com/coccinella-labs/warnings.git
+To https://github.com/coccinella-labs/cli.git
+To https://github.com/coccinella-labs/json-repo.git
+To https://github.com/coccinella-labs/config.git
+To https://github.com/coccinella-labs/license.git
+To https://github.com/coccinella-labs/gitkeep.git
 ```
 
 ## Usage
 
 ```bash
-python agent.py list          # List all emberlamp repos
+python agent.py list          # List all coccinella-labs repos
 python agent.py cloned        # List cloned repos in /tmp
 python agent.py clone <repo>  # Clone a specific repo
 python agent.py clone-all     # Clone all 14 repos
@@ -212,13 +212,13 @@ python agent.py capabilities  # Show agent capabilities
 # Basic run - shows agent info
 python agent.py
 
-# List all 14 emberlamp repos
+# List all 14 coccinella-labs repos
 python agent.py list
 
 # Clone a specific repo
 python agent.py clone bot
 
-# Clone all repos to /tmp/emberlamp/
+# Clone all repos to /tmp/coccinella-labs/
 python agent.py clone-all
 
 # Show full capabilities with skills
@@ -236,12 +236,12 @@ swe-agent/
 
 ## Repos
 
-The agent manages these emberlamp repos:
+The agent manages these coccinella-labs repos:
 - general, hub, react-template, swe-agent, gh-pin-repo, config, cli, bot, license, warnings, json-repo, gitkeep, .github, skills
 
 ## Skills
 
-Skills are loaded from emberlamp/skills repo:
+Skills are loaded from coccinella-labs/skills repo:
 - Developer tools, personas
 
 ## Experiment
@@ -251,7 +251,7 @@ Testing the agent in action:
 ```bash
 # Show capabilities (all 14 repos cloned, skills loaded)
 $ python3 /tmp/swe-agent/agent.py capabilities
-Agent: emberlamp-agent
+Agent: coccinella-labs-agent
 Total repos: 14
 Cloned repos: ['general', 'react-template', 'swe-agent', 'gh-pin-repo', 'config', 'cli', 'bot', 'license', 'warnings', 'json-repo', 'gitkeep', '.github', 'skills']
 Skills loaded: ['developer_tools', 'personas']
@@ -268,7 +268,7 @@ Success: True
 
 # List all repos
 $ python3 /tmp/swe-agent/agent.py list
-Emberlamp Repositories:
+Coccinella Labs Repositories:
   - general
   - react-template
   - swe-agent
@@ -296,7 +296,7 @@ Cloned repos: ['config', 'skills']
 
 # Basic run
 $ python3 /tmp/swe-agent/agent.py
-Agent: emberlamp-agent
+Agent: coccinella-labs-agent
 Total repos: 14
 Cloned repos: ['skills']
 Skills loaded: ['developer_tools', 'personas']
