@@ -15,7 +15,7 @@ on:
           - all
 
 env:
-  ORG: emberlamp
+  ORG: coccinella-labs
 
 jobs:
   sync:
@@ -39,7 +39,7 @@ jobs:
           import requests
           import os
           
-          org = os.environ.get('ORG', 'emberlamp')
+          org = os.environ.get('ORG', 'coccinella-labs')
           token = os.environ.get('GH_TOKEN', '')
           headers = {'Authorization': f'token {token}'} if token else {}
           
@@ -98,7 +98,7 @@ jobs:
           import os
           from datetime import datetime
           
-          org = os.environ.get('ORG', 'emberlamp')
+          org = os.environ.get('ORG', 'coccinella-labs')
           token = os.environ.get('GH_TOKEN', '')
           headers = {'Authorization': 'token ' + token} if token else {}
           
@@ -110,7 +110,7 @@ jobs:
           repos = repos_resp.json()
           
           report = []
-          report.append('# Emberlamp Organization Report')
+          report.append('# Coccinella Labs Organization Report')
           report.append('')
           report.append('Generated: ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
           report.append('')
