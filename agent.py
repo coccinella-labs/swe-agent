@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-ORG = "emberlamp"
+ORG = "coccinella-labs"
 CONFIG_URL = f"https://raw.githubusercontent.com/{ORG}/config/main/repos.json"
 SKILLS_URL = f"https://raw.githubusercontent.com/{ORG}/skills/main"
 
@@ -60,7 +60,7 @@ class SWEAgent:
                 if repo == "skills":
                     skill_path = (
                         Path(TMP_BASE)
-                        / "emberlamp"
+                        / "coccinella-labs"
                         / "skills"
                         / "agent"
                         / f"{skill_type}.md"
@@ -71,9 +71,9 @@ class SWEAgent:
     def get_repo_path(self, repo: str) -> Optional[Path]:
         """Get local path for a cloned repo in /tmp."""
         if repo == ".github":
-            repo_path = Path(TMP_BASE) / "emberlamp" / ".github"
+            repo_path = Path(TMP_BASE) / "coccinella-labs" / ".github"
         else:
-            repo_path = Path(TMP_BASE) / "emberlamp" / repo
+            repo_path = Path(TMP_BASE) / "coccinella-labs" / repo
         return repo_path if repo_path.exists() else None
 
     def is_repo_cloned(self, repo: str) -> bool:
@@ -81,16 +81,16 @@ class SWEAgent:
         return self.get_repo_path(repo) is not None
 
     def list_cloned_repos(self) -> list:
-        """List all cloned emberlamp repos in /tmp."""
+        """List all cloned coccinella-labs repos in /tmp."""
         return [repo for repo in self.repos if self.is_repo_cloned(repo)]
 
     def clone_repo(self, repo: str, force: bool = False) -> bool:
-        """Clone a repo to /tmp/emberlamp/<repo>. Returns True if successful."""
+        """Clone a repo to /tmp/coccinella-labs/<repo>. Returns True if successful."""
         if self.is_repo_cloned(repo) and not force:
             return True
         target = self.get_repo_path(repo)
         if target is None:
-            target = Path(TMP_BASE) / "emberlamp" / repo
+            target = Path(TMP_BASE) / "coccinella-labs" / repo
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             if repo == ".github":
@@ -105,7 +105,7 @@ class SWEAgent:
             return False
 
     def clone_all(self, force: bool = False) -> list:
-        """Clone all repos to /tmp/emberlamp/. Returns list of cloned repos."""
+        """Clone all repos to /tmp/coccinella-labs/. Returns list of cloned repos."""
         cloned = []
         for repo in self.repos:
             if self.clone_repo(repo, force):
@@ -134,11 +134,11 @@ class SWEAgent:
 if __name__ == "__main__":
     import sys
 
-    agent = SWEAgent("emberlamp-agent")
+    agent = SWEAgent("coccinella-labs-agent")
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
         if cmd == "list":
-            print("Emberlamp Repositories:")
+            print("Coccinella Labs Repositories:")
             for repo in agent.repos:
                 print(f"  - {repo}")
         elif cmd == "cloned":
