@@ -1,4 +1,4 @@
-name: Emberlamp Auto Bot
+name: Coccinella Labs Auto Bot
 
 on:
   schedule:
@@ -19,7 +19,7 @@ on:
           - report
 
 env:
-  ORG: emberlamp
+  ORG: coccinella-labs
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
@@ -69,10 +69,10 @@ jobs:
           for repo in $REPOS; do
             git clone --mirror "https://github.com/${{ env.ORG }}/$repo.git" "backup/$repo.git"
           done
-          tar -czf emberlamp-backup-$(date +%Y%m%d).tar.gz backup/
+          tar -czf coccinella-labs-backup-$(date +%Y%m%d).tar.gz backup/
 
       - name: Upload backup
         uses: actions/upload-artifact@v4
         with:
-          name: emberlamp-backup
-          path: emberlamp-backup-*.tar.gz
+          name: coccinella-labs-backup
+          path: coccinella-labs-backup-*.tar.gz
