@@ -1,0 +1,16 @@
+# Minimal labeler config; labels must exist in the repo.
+# Missing configuration here makes label-pr.yml crash on every PR.
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - README.md
+          - "docs/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/workflows/*"
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: "tests/**"

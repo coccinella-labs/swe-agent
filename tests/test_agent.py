@@ -8,36 +8,7 @@ import pytest
 
 import agent
 from agent import FALLBACK_REPOS, SWEAgent
-
-
-class FakeResult:
-    def __init__(self, returncode=0, stdout="", stderr=b""):
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
-
-
-@pytest.fixture
-def no_config(monkeypatch):
-    """Construction without touching the network; the agent then falls back."""
-    monkeypatch.setattr(agent.SWEAgent, "_fetch_repo_list", staticmethod(lambda: None))
-
-
-@pytest.fixture
-def usable_payload(monkeypatch):
-    monkeypatch.setattr(
-        agent.SWEAgent,
-        "_fetch_repo_list",
-        staticmethod(lambda: ["skills", "swe-agent"]),
-    )
-
-
-def runner(returncode, payload, monkeypatch):
-    def fake_run(cmd, **kwargs):
-        return FakeResult(returncode, payload)
-
-    monkeypatch.setattr(agent.subprocess, "run", fake_run)
-
+from conftest import FakeResult, runner
 
 # --- repo loading ---------------------------------------------------------
 
@@ -422,6 +393,60 @@ def test_can_handle_accepts_well_shaped_tasks(cloned_repo):
     assert cloned_repo.can_handle("do a thing") is False
     assert cloned_repo.can_handle({"operation": "read"}) is False
     assert cloned_repo.can_handle({"repo": "fx", "operation": "deploy"}) is False
+
+
+# --- search ---------------------------------------------------------------
+
+
+def test_search_returns_matches(cloned_repo, monkeypatch):
+    seen = []
+
+    def fake_run(cmd, cwd=None, timeout=300, **kwargs):
+        seen.append(cmd)
+        return FakeResult(0, stdout="calc.py:1:def add(a, b):\n")
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "search", "pattern": "def add"}
+    )
+    assert result["status"] == "ok"
+    assert result["data"]["count"] == 1
+    assert result["data"]["matches"] == ["calc.py:1:def add(a, b):"]
+    assert "grep" in seen[0] and "def add" in seen[0]
+
+
+def test_search_no_matches_is_ok_not_error(cloned_repo, monkeypatch):
+    monkeypatch.setattr(
+        agent.subprocess,
+        "run",
+        lambda cmd, cwd=None, timeout=300, **kwargs: FakeResult(1, stdout=""),
+    )
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "search", "pattern": "zzz"}
+    )
+    assert result["status"] == "ok"
+    assert result["data"]["count"] == 0
+
+
+def test_search_requires_pattern(cloned_repo):
+    result = cloned_repo.execute_task({"repo": "fx", "operation": "search"})
+    assert result["status"] == "error"
+    assert "'pattern'" in result["error"]
+
+
+def test_search_reports_git_failure(cloned_repo, monkeypatch):
+    monkeypatch.setattr(
+        agent.subprocess,
+        "run",
+        lambda cmd, cwd=None, timeout=300, **kwargs: FakeResult(
+            128, stderr="fatal: no git index available\n"
+        ),
+    )
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "search", "pattern": "x"}
+    )
+    assert result["status"] == "error"
+    assert "git grep failed" in result["error"]
 
 
 def test_capabilities_shape(no_config, tmp_path):
