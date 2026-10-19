@@ -532,6 +532,59 @@ def test_lint_survives_missing_ruff(cloned_repo, monkeypatch):
     assert "ruff is not installed" in result["error"]
 
 
+# --- multi-file view -------------------------------------------------------
+
+
+def test_read_multi_file_paths(cloned_repo):
+    clone = cloned_repo.get_repo_path("fx")
+    (clone / "a.txt").write_text("alpha")
+    (clone / "b.txt").write_text("beta")
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "read", "paths": ["a.txt", "b.txt"]}
+    )
+    assert result["status"] == "ok"
+    assert result["data"]["files"] == [
+        {"path": "a.txt", "text": "alpha"},
+        {"path": "b.txt", "text": "beta"},
+    ]
+
+
+def test_read_paths_rejects_more_than_eight(cloned_repo):
+    paths = [f"p{i}.txt" for i in range(9)]
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "read", "paths": paths}
+    )
+    assert result["status"] == "error"
+    assert "more than 8" in result["error"]
+
+
+def test_read_paths_rejects_non_string_entries(cloned_repo):
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "read", "paths": [1, 2]}
+    )
+    assert result["status"] == "error"
+
+
+def test_read_paths_rejects_escape(cloned_repo):
+    clone = cloned_repo.get_repo_path("fx")
+    (clone / "ok.txt").write_text("fine")
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "read", "paths": ["ok.txt", "../out"]}
+    )
+    assert result["status"] == "error"
+    assert "escapes" in result["error"]
+
+
+def test_observe_flattens_multi_file_view(cloned_repo):
+    clone = cloned_repo.get_repo_path("fx")
+    (clone / "a.txt").write_text("alpha")
+    (clone / "b.txt").write_text("beta")
+    text = cloned_repo._observe(
+        clone, {"repo": "fx"}, {"command": "view", "paths": ["a.txt", "b.txt"]}
+    )
+    assert "alpha" in text and "beta" in text
+
+
 # --- solve surface ---------------------------------------------------------
 
 
@@ -543,6 +596,7 @@ def test_solve_command_table_includes_diff_and_lint():
 def test_solve_prompt_documents_new_commands():
     assert "diff" in agent.SOLVE_SYSTEM
     assert "lint" in agent.SOLVE_SYSTEM
+    assert "paths" in agent.SOLVE_SYSTEM
 
 
 def test_parse_action_unknown_command_mentions_new_verbs(no_config, tmp_path):
