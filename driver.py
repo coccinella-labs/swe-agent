@@ -20,6 +20,8 @@ DEFAULT_MODEL = "claude-sonnet-4-5"
 # via the prices argument when these drift from the real price sheet.
 PRICES = {
     "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-5-20250929": {"input": 3.0, "output": 15.0},
+    "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
     "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
     "claude-opus-4-1": {"input": 15.0, "output": 75.0},
 }
