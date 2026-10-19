@@ -19,9 +19,9 @@ TMP_BASE = "/tmp"
 # agent itself depends on, so a retry against config stays possible.
 FALLBACK_REPOS = [".github", "config", "skills", "swe-agent"]
 
-OPERATIONS = ("read", "write", "test", "pr", "search", "solve")
+OPERATIONS = ("read", "write", "test", "pr", "search", "solve", "diff", "lint")
 
-SOLVE_COMMANDS = ("view", "search", "edit", "test", "submit")
+SOLVE_COMMANDS = ("view", "search", "edit", "test", "submit", "diff", "lint")
 
 SOLVE_MAX_TURNS = 10
 
@@ -32,14 +32,18 @@ Reply with EXACTLY ONE JSON object and nothing else, choosing one command:
 {{"command": "view", "path": "rel/path/file.py"}}
 {{"command": "search", "pattern": "git grep pattern"}}
 {{"command": "edit", "path": "rel/path/file.py", "content": "entire new file text"}}
+{{"command": "diff"}}
+{{"command": "lint"}}
 {{"command": "test"}}
 {{"command": "submit"}}
 
 Rules:
 - edit replaces the whole file, so 'content' must carry the complete new text.
 - paths are relative to the clone root and must never escape it.
+- diff shows the working-tree status and the current edits as a git diff and stat.
+- lint runs ruff check on the clone.
 - search patterns are git grep regexes applied to tracked files.
-- run "test" before "submit"; submitting with failing tests is premature.
+- run "lint" and "test" before "submit"; submitting with failing tests or lint errors is premature.
 - "submit" ends the run: the edits made up to that point become the delivered diff.
 - there is no shell, no network, and no pull-request command available here."""
 
@@ -347,6 +351,55 @@ class SWEAgent:
                 return ["npm", "test"]
         return None
 
+    def _op_diff(self, clone: Path, task: dict) -> dict:
+        steps = (
+            ("status", ["git", "status", "--porcelain"]),
+            ("stat", ["git", "diff", "--stat"]),
+            ("diff", ["git", "diff"]),
+        )
+        parts = []
+        for label, args in steps:
+            try:
+                result = self._run(args, cwd=clone, timeout=60)
+            except subprocess.SubprocessError as exc:
+                return self._task_error(task, f"git {label} could not run: {exc}")
+            if result.returncode != 0:
+                tail = (result.stderr or result.stdout or "").strip()
+                message = f"git {label} exited {result.returncode}"
+                if tail:
+                    message += f"; output tail:\n{tail}"
+                return self._task_error(task, message)
+            parts.append(f"{label}:\n{(result.stdout or '').strip()}")
+        text = "\n\n".join(parts)
+        return {
+            "repo": task["repo"],
+            "operation": "diff",
+            "status": "ok",
+            "data": {"text": text, "truncated": len(text) > 8000},
+        }
+
+    def _op_lint(self, clone: Path, task: dict) -> dict:
+        try:
+            result = self._run(["ruff", "check", "."], cwd=clone, timeout=120)
+        except FileNotFoundError:
+            return self._task_error(task, "ruff is not installed in this environment")
+        except subprocess.SubprocessError as exc:
+            return self._task_error(task, f"lint could not complete: {exc}")
+        tail = "\n".join(
+            ((result.stdout or "") + (result.stderr or "")).splitlines()[-40:]
+        )
+        if result.returncode != 0:
+            return self._task_error(
+                task,
+                f"lint failed (exit {result.returncode}); output tail:\n{tail}",
+            )
+        return {
+            "repo": task["repo"],
+            "operation": "lint",
+            "status": "ok",
+            "data": {"output_tail": tail},
+        }
+
     def _op_test(self, clone: Path, task: dict) -> dict:
         command = self._detect_test_command(clone)
         if command is None:
@@ -580,6 +633,16 @@ class SWEAgent:
             if result["status"] != "ok":
                 return f"error: {result['error']}"
             return f"tests passed:\n{result['data']['output_tail']}"[:8000]
+        if action["command"] == "diff":
+            result = self._op_diff(clone, dict(task))
+            if result["status"] != "ok":
+                return f"error: {result['error']}"
+            return result["data"]["text"][:8000]
+        if action["command"] == "lint":
+            result = self._op_lint(clone, dict(task))
+            if result["status"] != "ok":
+                return f"error: {result['error']}"
+            return f"lint passed:\n{result['data']['output_tail']}"[:8000]
         return f"error: unreachable command {action['command']!r}"
 
     def _solve(self, task: dict) -> dict:
