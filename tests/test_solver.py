@@ -115,6 +115,7 @@ def test_solve_writes_jsonl_transcript(solve_repo, tmp_path):
     assert "run" in lines[0]
     assert lines[0]["run"]["repo"] == "coccinella-labs/fx"
     assert [line["action"]["command"] for line in lines[1:]] == ["view", "submit"]
+    assert all("usage" in line for line in lines[1:])
     assert result["data"]["transcript"] == str(files[0])
 
 

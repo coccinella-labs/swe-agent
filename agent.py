@@ -628,7 +628,16 @@ class SWEAgent:
             action, observation = self._parse_action(reply.text)
             if action and action["command"] == "submit":
                 lines.append(
-                    {"turn": turn, "action": action, "observation": "submitted"}
+                    {
+                        "turn": turn,
+                        "action": action,
+                        "observation": "submitted",
+                        "usage": {
+                            "input_tokens": reply.input_tokens,
+                            "output_tokens": reply.output_tokens,
+                            "cost_estimate": reply.cost_estimate,
+                        },
+                    }
                 )
                 if self.on_event:
                     self.on_event(turn, "submit", "submitted")
