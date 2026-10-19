@@ -19,7 +19,7 @@ This agent knows all coccinella-labs repositories and can clone them to /tmp/coc
 
 ## Workflows
 
-All 14 coccinella-labs repos have five workflows:
+Repos in coccinella-labs share the same five workflows. The live repo list is kept in coccinella-labs/config:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
@@ -199,12 +199,42 @@ To https://github.com/coccinella-labs/gitkeep.git
 ## Usage
 
 ```bash
-python agent.py list          # List all coccinella-labs repos
-python agent.py cloned        # List cloned repos in /tmp
-python agent.py clone <repo>  # Clone a specific repo
-python agent.py clone-all     # Clone all 14 repos
-python agent.py capabilities  # Show agent capabilities
+python agent.py list           # List all coccinella-labs repos
+python agent.py cloned         # List cloned repos in /tmp
+python agent.py clone <repo>   # Clone a specific repo
+python agent.py clone-all      # Clone every repo the agent knows about
+python agent.py capabilities   # Show agent capabilities
+python agent.py task '<json>'  # Run one task (read, write, test, pr)
 ```
+
+## Tasks
+
+`execute_task` runs one task against a cloned repo. A task is a JSON object
+with `repo` and `operation`:
+
+```bash
+python agent.py task '{"repo": "config", "operation": "read", "path": "repos.json"}'
+python agent.py task '{"repo": "nope", "operation": "read", "path": "x"}'
+# {"repo": "nope", "operation": "read", "status": "error",
+#  "error": "repo 'nope' is not cloned under /tmp"}
+```
+
+| Operation | Needs | Does |
+|-----------|-------|------|
+| read | `path` | Returns the file text from the clone |
+| write | `path`, string `content` | Writes the file into the clone, uncommitted |
+| test | nothing | Runs the repo's own test command |
+| pr | `branch`, `message`, `"confirm": true` | Commits the working tree on a new branch, pushes, opens a PR |
+
+Rules that hold for every operation:
+
+- The target repo must already be cloned under `/tmp/coccinella-labs/`.
+- Paths are resolved inside the clone; anything escaping it is refused.
+- The result is a dict with `status` of `ok` or `error`, never a raise.
+- `pr` is the only operation that reaches GitHub and it refuses to run
+  without `"confirm": true` set in the task itself.
+- `test` picks the repo's own command: a Makefile `test:` target, then
+  pytest with the interpreter running the agent, then an npm `test` script.
 
 ## Examples
 
@@ -212,7 +242,7 @@ python agent.py capabilities  # Show agent capabilities
 # Basic run - shows agent info
 python agent.py
 
-# List all 14 coccinella-labs repos
+# List every repo the agent loaded from coccinella-labs/config
 python agent.py list
 
 # Clone a specific repo
@@ -229,15 +259,19 @@ python agent.py capabilities
 
 ```
 swe-agent/
-├── agent.py        # Main agent with repo awareness
-├── README.md       # This file
+├── agent.py             # Main agent with repo awareness and task operations
+├── tests/               # Pytest suite, offline (network touchpoints are stubbed)
+├── conftest.py          # Puts the repo root on sys.path so tests can import agent
+├── requirements-dev.txt # pytest and ruff pins used by CI
+├── README.md
 └── .pre-commit-config.yaml
 ```
 
 ## Repos
 
-The agent manages these coccinella-labs repos:
-- general, hub, react-template, swe-agent, gh-pin-repo, config, cli, bot, license, warnings, json-repo, gitkeep, .github, skills
+Repos are loaded live from coccinella-labs/config@main (repos.json, 150+
+entries today). When config cannot be reached, the agent falls back to the
+four repos it depends on: .github, config, skills, swe-agent.
 
 ## Skills
 
@@ -249,39 +283,31 @@ Skills are loaded from coccinella-labs/skills repo:
 Testing the agent in action:
 
 ```bash
-# Show capabilities (all 14 repos cloned, skills loaded)
-$ python3 /tmp/swe-agent/agent.py capabilities
+# Show capabilities (fresh run against coccinella-labs/config)
+$ python3 agent.py capabilities
 Agent: coccinella-labs-agent
-Total repos: 14
-Cloned repos: ['general', 'react-template', 'swe-agent', 'gh-pin-repo', 'config', 'cli', 'bot', 'license', 'warnings', 'json-repo', 'gitkeep', '.github', 'skills']
+Total repos: 153
+Cloned repos: []
 Skills loaded: ['developer_tools', 'personas']
 
-# Clone all repos
-$ python3 /tmp/swe-agent/agent.py clone-all
-Cloning all repos...
-Cloned: ['general', 'react-template', 'swe-agent', 'gh-pin-repo', 'config', 'cli', 'bot', 'license', 'warnings', 'json-repo', 'gitkeep', '.github', 'skills']
-
-# Clone single repo
-$ python3 /tmp/swe-agent/agent.py clone bot
-Cloning bot...
-Success: True
-
-# List all repos
-$ python3 /tmp/swe-agent/agent.py list
+# List repos
+$ python3 agent.py list | head -6
 Coccinella Labs Repositories:
-  - general
-  - react-template
-  - swe-agent
-  - gh-pin-repo
-  - config
-  - cli
-  - bot
-  - license
-  - warnings
-  - json-repo
-  - gitkeep
   - .github
-  - skills
+  - activity
+  - agent-sdk
+  - agentware
+  - ai
+  - and
+
+# Task that targets an uncloned repo
+$ python3 agent.py task '{"repo": "nope", "operation": "read", "path": "x"}'
+{
+  "repo": "nope",
+  "operation": "read",
+  "status": "error",
+  "error": "repo 'nope' is not cloned under /tmp"
+}
 
 # Python API usage
 $ python3 -c "
@@ -292,12 +318,5 @@ print(f'Clone config: {result}')
 print(f'Cloned repos: {agent.list_cloned_repos()}')
 "
 Clone config: True
-Cloned repos: ['config', 'skills']
-
-# Basic run
-$ python3 /tmp/swe-agent/agent.py
-Agent: coccinella-labs-agent
-Total repos: 14
-Cloned repos: ['skills']
-Skills loaded: ['developer_tools', 'personas']
+Cloned repos: ['config']
 ```
