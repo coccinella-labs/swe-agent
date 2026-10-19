@@ -29,7 +29,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          
+
       - name: Install dependencies
         run: pip install requests pyyaml
 
@@ -38,28 +38,28 @@ jobs:
           python3 << 'PYEOF'
           import requests
           import os
-          
+
           org = os.environ.get('ORG', 'coccinella-labs')
           token = os.environ.get('GH_TOKEN', '')
           headers = {'Authorization': f'token {token}'} if token else {}
-          
+
           # Get config repos
           config_resp = requests.get(
             'https://raw.githubusercontent.com/' + org + '/config/main/repos.json',
             headers=headers
           )
           config_repos = sorted(config_resp.json().get('repos', []))
-          
+
           # Get GitHub repos
           gh_resp = requests.get(
             'https://api.github.com/orgs/' + org + '/repos',
             headers=headers
           )
           gh_repos = sorted([r['name'] for r in gh_resp.json()])
-          
+
           print('Config repos ({0}): {1}'.format(len(config_repos), config_repos))
           print('GitHub repos ({0}): {1}'.format(len(gh_repos), gh_repos))
-          
+
           if config_repos == gh_repos:
             print('REPOS_IN_SYNC=true')
           else:
@@ -87,7 +87,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          
+
       - name: Install dependencies
         run: pip install requests
 
@@ -97,18 +97,18 @@ jobs:
           import requests
           import os
           from datetime import datetime
-          
+
           org = os.environ.get('ORG', 'coccinella-labs')
           token = os.environ.get('GH_TOKEN', '')
           headers = {'Authorization': 'token ' + token} if token else {}
-          
+
           # Get repos
           repos_resp = requests.get(
             'https://api.github.com/orgs/' + org + '/repos',
             headers=headers
           )
           repos = repos_resp.json()
-          
+
           report = []
           report.append('# Coccinella Labs Organization Report')
           report.append('')
@@ -118,17 +118,17 @@ jobs:
           report.append('- Repositories: ' + str(len(repos)))
           report.append('')
           report.append('## Repositories')
-          
+
           for repo in repos:
             name = repo['name']
             url = repo['html_url']
             report.append('- [' + name + '](' + url + ')')
-          
+
           report_text = '\n'.join(report)
-          
+
           with open('report.md', 'w') as f:
             f.write(report_text)
-          
+
           print(report_text)
           print('')
           print('Report saved to report.md')

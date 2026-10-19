@@ -36,24 +36,24 @@ jobs:
           else
             # Get commits on main since last tag
             LAST_TAG=$(git describe --tags --abbrev=0 origin/main 2>/dev/null || echo "none")
-            
+
             # Get commit messages
             if [ "$LAST_TAG" = "none" ]; then
               COMMITS=$(git log --format=%s origin/main)
             else
               COMMITS=$(git log --format=%s $LAST_TAG..origin/main 2>/dev/null || git log --format=%s origin/main)
             fi
-            
+
             # Count features and fixes
             FEAT_COUNT=$(echo "$COMMITS" | grep -c "^feat:" || true)
             FIX_COUNT=$(echo "$COMMITS" | grep -c "^fix:" || true)
-            
+
             # Remove any whitespace
             FEAT_COUNT=$(echo "$FEAT_COUNT" | tr -d ' ')
             FIX_COUNT=$(echo "$FIX_COUNT" | tr -d ' ')
-            
+
             echo "LAST_TAG=$LAST_TAG FEAT_COUNT=$FEAT_COUNT FIX_COUNT=$FIX_COUNT"
-            
+
             if [ "$FEAT_COUNT" = "" ] || [ "$FEAT_COUNT" -eq 0 ]; then
               if [ "$FIX_COUNT" = "" ] || [ "$FIX_COUNT" -eq 0 ]; then
                 BUMP="none"
@@ -78,13 +78,13 @@ jobs:
             IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
             MAJOR=${MAJOR:-0}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
           fi
-          
+
           case "${{ steps.version.outputs.bump }}" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
             patch) PATCH=$((PATCH + 1)) ;;
           esac
-          
+
           NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
           echo "NEW_TAG=$NEW_TAG" >> $GITHUB_OUTPUT
           echo "Creating tag: $NEW_TAG"
@@ -96,31 +96,31 @@ jobs:
         id: release_notes
         run: |
           LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null | tr -d "\n")
-          
+
           echo "## What's Changed" > release_notes.md
           echo "" >> release_notes.md
-          
+
           FEATS=$(git log --pretty=format:"%s" $LAST_TAG..HEAD | grep "^feat:" | sed 's/^feat: /- /' || true)
           if [ -n "$FEATS" ]; then
             echo "### ✨ Features" >> release_notes.md
             echo "$FEATS" >> release_notes.md
             echo "" >> release_notes.md
           fi
-          
+
           FIXES=$(git log --pretty=format:"%s" $LAST_TAG..HEAD | grep "^fix:" | sed 's/^fix: /- /' || true)
           if [ -n "$FIXES" ]; then
             echo "### 🐛 Bug Fixes" >> release_notes.md
             echo "$FIXES" >> release_notes.md
             echo "" >> release_notes.md
           fi
-          
+
           DOCS=$(git log --pretty=format:"%s" $LAST_TAG..HEAD | grep "^docs:" | sed 's/^docs: /- /' || true)
           if [ -n "$DOCS" ]; then
             echo "### 📝 Documentation" >> release_notes.md
             echo "$DOCS" >> release_notes.md
             echo "" >> release_notes.md
           fi
-          
+
           echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$LAST_TAG...${{ steps.bump.outputs.NEW_TAG }}" >> release_notes.md
 
       - name: Create Release
@@ -128,7 +128,7 @@ jobs:
         run: |
           TAG="${{ steps.bump.outputs.NEW_TAG }}"
           echo "Creating release for tag: $TAG"
-          
+
           # Check if release already exists
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release $TAG already exists, updating..."
