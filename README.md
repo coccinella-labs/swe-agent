@@ -204,7 +204,7 @@ python agent.py cloned         # List cloned repos in /tmp
 python agent.py clone <repo>   # Clone a specific repo
 python agent.py clone-all      # Clone every repo the agent knows about
 python agent.py capabilities   # Show agent capabilities
-python agent.py task '<json>'  # Run one task (read, write, test, pr)
+python agent.py task '<json>'  # Run one task (read, write, test, pr, search, solve)
 ```
 
 ## Tasks
@@ -225,6 +225,8 @@ python agent.py task '{"repo": "nope", "operation": "read", "path": "x"}'
 | write | `path`, string `content` | Writes the file into the clone, uncommitted |
 | test | nothing | Runs the repo's own test command |
 | pr | `branch`, `message`, `"confirm": true` | Commits the working tree on a new branch, pushes, opens a PR |
+| search | `pattern` | git grep inside the clone, returns line matches |
+| solve | `instruction`, or `issue` plus a model key | Model loop over view, search, edit, test; ends with a diff. Never pushes |
 
 Rules that hold for every operation:
 
@@ -235,6 +237,32 @@ Rules that hold for every operation:
   without `"confirm": true` set in the task itself.
 - `test` picks the repo's own command: a Makefile `test:` target, then
   pytest with the interpreter running the agent, then an npm `test` script.
+
+## Solve loop
+
+`solve` is the model-driven operation. It fetches context, clones the repo
+if needed, and loops the model through a command allowlist until it calls
+`submit`. The delivered result is a diff from the clone; nothing is pushed.
+
+```bash
+export ANTHROPIC_API_KEY=...        # required; never committed
+export SWE_AGENT_MODEL=claude-sonnet-4-5   # optional override
+python agent.py task '{"repo": "calculator", "operation": "solve",
+  "issue": 4, "max_turns": 12, "cost_cap_usd": 2.0}'
+```
+
+Behavior worth knowing before first use:
+
+- The model can only issue `view`, `search`, `edit`, `test`, and `submit`.
+  There is no shell, no network, and no pull-request command in the loop.
+- `edit` writes a whole file inside the clone; the path guard refuses
+  anything escaping it.
+- Turn cap defaults to 10 (hard ceiling 50), the cost cap defaults to 2 USD
+  with an internal price table, and the driver refuses the next call once
+  the cumulative estimate passes the cap.
+- Every turn goes to a JSONL transcript under
+  `/tmp/coccinella-labs/transcripts/<repo>/` for auditing.
+- Costs are rough estimates used only for the cap, never billing figures.
 
 ## Examples
 
@@ -259,9 +287,10 @@ python agent.py capabilities
 
 ```
 swe-agent/
-├── agent.py             # Main agent with repo awareness and task operations
-├── tests/               # Pytest suite, offline (network touchpoints are stubbed)
-├── conftest.py          # Puts the repo root on sys.path so tests can import agent
+├── agent.py             # Main agent: ops, guard rails, and the solve loop
+├── driver.py            # Anthropic Messages client with caps (offline-testable)
+├── tests/               # Pytest suite, offline (network and transport stubbed)
+├── conftest.py          # Shared stubs; puts the repo root on sys.path
 ├── requirements-dev.txt # pytest and ruff pins used by CI
 ├── README.md
 └── .pre-commit-config.yaml
