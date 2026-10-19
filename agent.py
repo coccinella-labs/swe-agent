@@ -1,9 +1,14 @@
 """SWE Agent - Software Engineering Agent."""
 
 import json
+import os
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+from driver import CapReached, Driver, DriverError
 
 ORG = "coccinella-labs"
 CONFIG_URL = f"https://raw.githubusercontent.com/{ORG}/config/main/repos.json"
@@ -14,7 +19,29 @@ TMP_BASE = "/tmp"
 # agent itself depends on, so a retry against config stays possible.
 FALLBACK_REPOS = [".github", "config", "skills", "swe-agent"]
 
-OPERATIONS = ("read", "write", "test", "pr")
+OPERATIONS = ("read", "write", "test", "pr", "search", "solve")
+
+SOLVE_COMMANDS = ("view", "search", "edit", "test", "submit")
+
+SOLVE_MAX_TURNS = 10
+
+SOLVE_SYSTEM = """You are a software engineering agent working in a local clone of the org repo {org}/{repo}. Complete the assigned task with the smallest correct change and no drive-by edits.
+
+Reply with EXACTLY ONE JSON object and nothing else, choosing one command:
+
+{{"command": "view", "path": "rel/path/file.py"}}
+{{"command": "search", "pattern": "git grep pattern"}}
+{{"command": "edit", "path": "rel/path/file.py", "content": "entire new file text"}}
+{{"command": "test"}}
+{{"command": "submit"}}
+
+Rules:
+- edit replaces the whole file, so 'content' must carry the complete new text.
+- paths are relative to the clone root and must never escape it.
+- search patterns are git grep regexes applied to tracked files.
+- run "test" before "submit"; submitting with failing tests is premature.
+- "submit" ends the run: the edits made up to that point become the delivered diff.
+- there is no shell, no network, and no pull-request command available here."""
 
 
 class SWEAgent:
@@ -25,12 +52,16 @@ class SWEAgent:
         name: str,
         capabilities: list | None = None,
         tmp_base: str | None = None,
+        driver_factory=None,
+        on_event=None,
     ):
         self.name = name
         self.capabilities = capabilities or []
         self.repos = []
         self.skills = {}
         self.tmp_base = Path(tmp_base) if tmp_base else Path(TMP_BASE)
+        self.driver_factory = driver_factory
+        self.on_event = on_event
         self.last_error: str | None = None
         self._load_repos()
         self._load_skills()
@@ -158,13 +189,17 @@ class SWEAgent:
         """Run one task against a cloned org repo.
 
         A task is a dict with 'repo' and 'operation' (one of 'read', 'write',
-        'test', 'pr') plus operation-specific fields:
+        'test', 'pr', 'search', 'solve') plus operation-specific fields:
 
-        - read:  'path' exists in the clone; returns file text.
-        - write: 'path' and string 'content'; writes the file, uncommitted.
-        - test:  runs the repo's own tests; reports the command and outcome.
-        - pr:    needs 'branch' and 'message', and confirm=True; commits the
-                 working tree on a new branch, pushes it, and opens a PR.
+        - read:   'path' exists in the clone; returns file text.
+        - write:  'path' and string 'content'; writes the file, uncommitted.
+        - test:   runs the repo's own tests; reports the command and outcome.
+        - pr:     needs 'branch' and 'message', and confirm=True; commits the
+                  working tree on a new branch, pushes it, and opens a PR.
+        - search: string 'pattern'; returns git grep hits inside the clone.
+        - solve:  model-driven loop that reads, searches, edits, and tests
+                  its way to a diff; needs 'instruction' or 'issue'. Clones
+                  for itself; never pushes anything.
 
         Returns a result dict whose status is 'ok' or 'error'.
         """
@@ -192,6 +227,8 @@ class SWEAgent:
                 "error": f"unknown operation {op!r}; supported are "
                 + ", ".join(OPERATIONS),
             }
+        if op == "solve":
+            return self._solve(task)
         clone = self.get_repo_path(repo)
         if clone is None:
             return {
@@ -263,6 +300,26 @@ class SWEAgent:
             "operation": "write",
             "status": "ok",
             "data": {"path": rel, "bytes": len(content.encode())},
+        }
+
+    def _op_search(self, clone: Path, task: dict) -> dict:
+        """git grep inside the clone; exit 1 means no matches, not failure."""
+        pattern = task.get("pattern")
+        if not isinstance(pattern, str) or not pattern:
+            return self._task_error(task, "search needs a string 'pattern'")
+        result = self._run(
+            ["git", "-C", str(clone), "grep", "-n", "-I", "--", pattern],
+            timeout=60,
+        )
+        if result.returncode not in (0, 1):
+            detail = (result.stderr or "").strip().splitlines()[-1:] or ["no output"]
+            return self._task_error(task, f"git grep failed: {detail[0]}")
+        matches = [line for line in (result.stdout or "").splitlines() if line][:200]
+        return {
+            "repo": task["repo"],
+            "operation": "search",
+            "status": "ok",
+            "data": {"pattern": pattern, "count": len(matches), "matches": matches},
         }
 
     @staticmethod
@@ -377,6 +434,250 @@ class SWEAgent:
             "status": "ok",
             "data": {"branch": branch, "url": pr_url},
         }
+
+    # --- solve loop --------------------------------------------------------
+
+    def _make_driver(self, task: dict) -> Driver:
+        return Driver(
+            model=task.get("model"),
+            max_output_tokens=task.get("max_output_tokens", 2048),
+            cost_cap_usd=task.get("cost_cap_usd", 2.0),
+        )
+
+    def _transcript_path(self, repo: str) -> Path:
+        stamp = time.strftime("%Y%m%d-T%H%M%SZ", time.gmtime())
+        return (
+            self.tmp_base
+            / "coccinella-labs"
+            / "transcripts"
+            / repo
+            / f"{stamp}-{os.getpid()}.jsonl"
+        )
+
+    @staticmethod
+    def _write_transcript(path: Path, lines: list) -> str | None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w") as handle:
+                handle.writelines(json.dumps(line) + "\n" for line in lines)
+            return str(path)
+        except OSError:
+            return None
+
+    def _fetch_issue_brief(self, issue, repo: str) -> str | None:
+        """gh issue view -> readable text, or None when unusable."""
+        if issue is None:
+            return None
+        raw = str(issue).strip()
+        match = re.search(r"/issues/(\d+)$", raw)
+        number = match.group(1) if match else (raw if raw.isdigit() else "")
+        if not number:
+            return None
+        result = self._run(
+            [
+                "gh",
+                "issue",
+                "view",
+                number,
+                "-R",
+                f"{ORG}/{repo}",
+                "--json",
+                "title,body,state,url",
+            ],
+            timeout=60,
+        )
+        if result.returncode != 0:
+            return None
+        try:
+            data = json.loads(result.stdout)
+        except ValueError:
+            return None
+        body = data.get("body") or ""
+        return (
+            f"[{data.get('state', 'UNKNOWN')}] {data.get('title', '')}\n"
+            f"{data.get('url', '')}\n\n{body[:8000]}"
+        )
+
+    def _solve_brief(self, clone: Path, task: dict) -> str:
+        instruction = task.get("instruction")
+        if isinstance(instruction, str) and instruction.strip():
+            source = instruction.strip()
+            origin = "provided instruction"
+        else:
+            source = self._fetch_issue_brief(task.get("issue"), task["repo"])
+            origin = "GitHub issue"
+            if not source:
+                raise ValueError(
+                    "solve needs a non-empty 'instruction' or a usable "
+                    "'issue' (a number or an issue URL)"
+                )
+        listing = self._run(["git", "-C", str(clone), "ls-files"], timeout=60)
+        files = "\n".join((listing.stdout or "").splitlines()[:100])
+        return (
+            f"Task ({origin}):\n{source}\n\n"
+            f"Org repo: {ORG}/{task['repo']}\n"
+            f"Local clone: {clone}\n"
+            f"Tracked files (first 100):\n{files}\n\n"
+            "Work one JSON command per turn as described in your system "
+            "prompt, and submit when the fix is in place and tested."
+        )
+
+    @staticmethod
+    def _parse_action(text: str) -> tuple[dict | None, str | None]:
+        """Turn one model reply into (action, observation)."""
+        try:
+            action = json.loads(text)
+        except ValueError:
+            action = None
+        if not isinstance(action, dict) or not isinstance(action.get("command"), str):
+            return None, (
+                "error: reply must be exactly one JSON object with a "
+                f"string 'command'; got: {text[:200]!r}"
+            )
+        if action["command"] not in SOLVE_COMMANDS:
+            return None, (
+                f"error: unknown command {action['command']!r}; allowed "
+                f"commands are: {', '.join(SOLVE_COMMANDS)}"
+            )
+        return action, None
+
+    def _observe(self, clone: Path, task: dict, action: dict) -> str:
+        """Run one allowed model command against the clone; plain text back."""
+        if action["command"] == "view":
+            result = self._op_read(
+                clone,
+                {"repo": task["repo"], "operation": "read", "path": action.get("path")},
+            )
+            text = result["data"]["text"] if result["status"] == "ok" else None
+            if text is not None:
+                if len(text) > 8000:
+                    text = text[:8000] + "\n... (truncated)"
+                return text
+            return f"error: {result['error']}"
+        if action["command"] == "search":
+            result = self._op_search(clone, dict(task, pattern=action.get("pattern")))
+            if result["status"] != "ok":
+                return f"error: {result['error']}"
+            data = result["data"]
+            if not data["count"]:
+                return "no matches"
+            return "\n".join(data["matches"])[:8000]
+        if action["command"] == "edit":
+            result = self._op_write(
+                clone,
+                {
+                    "repo": task["repo"],
+                    "operation": "write",
+                    "path": action.get("path"),
+                    "content": action.get("content"),
+                },
+            )
+            if result["status"] != "ok":
+                return f"error: {result['error']}"
+            return f"wrote {result['data']['path']} ({result['data']['bytes']} bytes)"
+        if action["command"] == "test":
+            result = self._op_test(clone, dict(task))
+            if result["status"] != "ok":
+                return f"error: {result['error']}"
+            return f"tests passed:\n{result['data']['output_tail']}"[:8000]
+        return f"error: unreachable command {action['command']!r}"
+
+    def _solve(self, task: dict) -> dict:
+        """Model-driven loop within one clone; output is a diff, never a push."""
+        repo = task["repo"]
+        clone = self.get_repo_path(repo)
+        if clone is None:
+            if not self.clone_repo(repo):
+                return self._task_error(task, f"clone failed: {self.last_error}")
+            clone = self.get_repo_path(repo)
+        try:
+            brief = self._solve_brief(clone, task)
+        except ValueError as exc:
+            return self._task_error(task, str(exc))
+        max_turns = task.get("max_turns", SOLVE_MAX_TURNS)
+        if not isinstance(max_turns, int) or not 1 <= max_turns <= 50:
+            return self._task_error(task, "max_turns must be an integer from 1 to 50")
+        if self.driver_factory:
+            driver = self.driver_factory()
+        else:
+            driver = self._make_driver(task)
+        transcript_path = self._transcript_path(repo)
+        lines = [
+            {
+                "run": {
+                    "repo": f"{ORG}/{repo}",
+                    "clone": str(clone),
+                    "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "instruction": brief[:4000],
+                    "max_turns": max_turns,
+                }
+            }
+        ]
+        system = SOLVE_SYSTEM.format(org=ORG, repo=repo)
+        messages = [{"role": "user", "content": brief}]
+        stop_reason = f"turn cap reached ({max_turns})"
+        for turn in range(1, max_turns + 1):
+            try:
+                reply = driver.chat(system, messages)
+            except CapReached as exc:
+                stop_reason = f"stopped: {exc}"
+                break
+            except DriverError as exc:
+                stop_reason = f"stopped: model call failed: {exc}"
+                break
+            action, observation = self._parse_action(reply.text)
+            if action and action["command"] == "submit":
+                lines.append(
+                    {"turn": turn, "action": action, "observation": "submitted"}
+                )
+                if self.on_event:
+                    self.on_event(turn, "submit", "submitted")
+                files = self._run(
+                    ["git", "-C", str(clone), "diff", "HEAD", "--name-only"],
+                    timeout=60,
+                )
+                diff = self._run(["git", "-C", str(clone), "diff", "HEAD"], timeout=60)
+                transcript = self._write_transcript(transcript_path, lines)
+                data = {
+                    "turns": turn,
+                    "files_changed": (files.stdout or "").split(),
+                    "diff": (diff.stdout or "")[:20000],
+                    "transcript": transcript,
+                    "usage": {
+                        "input_tokens": reply.input_tokens,
+                        "output_tokens": reply.output_tokens,
+                        "cost_estimate": reply.cost_estimate,
+                    },
+                }
+                return {
+                    "repo": repo,
+                    "operation": "solve",
+                    "status": "ok",
+                    "data": data,
+                }
+            if action:
+                observation = self._observe(clone, task, action)
+            lines.append(
+                {
+                    "turn": turn,
+                    "action": action if action else reply.text[:2000],
+                    "observation": observation,
+                    "usage": {
+                        "input_tokens": reply.input_tokens,
+                        "output_tokens": reply.output_tokens,
+                        "cost_estimate": reply.cost_estimate,
+                    },
+                }
+            )
+            if self.on_event:
+                summary = json.dumps(action) if action else reply.text
+                self.on_event(turn, summary[:200], observation[:300])
+            messages = messages + [
+                {"role": "assistant", "content": reply.text},
+                {"role": "user", "content": observation or "no-op"},
+            ]
+        self._write_transcript(transcript_path, lines)
+        return self._task_error(task, f"{stop_reason}; transcript: {transcript_path}")
 
     def get_capabilities(self) -> dict:
         """Get agent capabilities including skills."""
