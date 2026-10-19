@@ -457,3 +457,174 @@ def test_capabilities_shape(no_config, tmp_path):
     assert info["cloned_repos"] == []
     assert set(info["skills"]) == {"developer_tools", "personas"}
     assert info["tmp_base"] == str(tmp_path)
+
+
+# --- diff operation --------------------------------------------------------
+
+
+def test_diff_reports_working_tree_changes(cloned_repo):
+    clone = cloned_repo.get_repo_path("fx")
+    subprocess.run(["git", "init", "-q"], cwd=clone, check=False, capture_output=True)
+    (clone / "tracked.txt").write_text("one\n")
+    subprocess.run(
+        ["git", "add", "tracked.txt"], cwd=clone, check=False, capture_output=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@x",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+        cwd=clone,
+        check=False,
+        capture_output=True,
+    )
+    (clone / "tracked.txt").write_text("two\n")
+    result = cloned_repo.execute_task({"repo": "fx", "operation": "diff"})
+    assert result["status"] == "ok"
+    assert "M tracked.txt" in result["data"]["text"]
+    assert result["data"]["truncated"] is False
+
+
+def test_diff_errors_outside_a_git_repo(cloned_repo):
+    result = cloned_repo.execute_task({"repo": "fx", "operation": "diff"})
+    assert result["status"] == "error"
+    assert "exited 128" in result["error"]
+
+
+# --- lint operation --------------------------------------------------------
+
+
+def test_lint_reports_success(cloned_repo, monkeypatch):
+    def fake_run(cmd, cwd=None, timeout=300, **kwargs):
+        assert cmd == ["ruff", "check", "."]
+        assert cwd is not None
+        return FakeResult(0, stdout="All checks passed!")
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    result = cloned_repo.execute_task({"repo": "fx", "operation": "lint"})
+    assert result["status"] == "ok"
+    assert result["data"]["output_tail"] == "All checks passed!"
+
+
+def test_lint_reports_violations(cloned_repo, monkeypatch):
+    def fake_run(cmd, cwd=None, timeout=300, **kwargs):
+        return FakeResult(1, stdout="x.py:1:1: F401 import unused")
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    result = cloned_repo.execute_task({"repo": "fx", "operation": "lint"})
+    assert result["status"] == "error"
+    assert "lint failed (exit 1)" in result["error"]
+
+
+def test_lint_survives_missing_ruff(cloned_repo, monkeypatch):
+    def boom(cmd, cwd=None, timeout=300, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(agent.subprocess, "run", boom)
+    result = cloned_repo.execute_task({"repo": "fx", "operation": "lint"})
+    assert result["status"] == "error"
+    assert "ruff is not installed" in result["error"]
+
+
+# --- multi-file view -------------------------------------------------------
+
+
+def test_read_multi_file_paths(cloned_repo):
+    clone = cloned_repo.get_repo_path("fx")
+    (clone / "a.txt").write_text("alpha")
+    (clone / "b.txt").write_text("beta")
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "read", "paths": ["a.txt", "b.txt"]}
+    )
+    assert result["status"] == "ok"
+    assert result["data"]["files"] == [
+        {"path": "a.txt", "text": "alpha"},
+        {"path": "b.txt", "text": "beta"},
+    ]
+
+
+def test_read_paths_rejects_more_than_eight(cloned_repo):
+    paths = [f"p{i}.txt" for i in range(9)]
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "read", "paths": paths}
+    )
+    assert result["status"] == "error"
+    assert "more than 8" in result["error"]
+
+
+def test_read_paths_rejects_non_string_entries(cloned_repo):
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "read", "paths": [1, 2]}
+    )
+    assert result["status"] == "error"
+
+
+def test_read_paths_rejects_escape(cloned_repo):
+    clone = cloned_repo.get_repo_path("fx")
+    (clone / "ok.txt").write_text("fine")
+    result = cloned_repo.execute_task(
+        {"repo": "fx", "operation": "read", "paths": ["ok.txt", "../out"]}
+    )
+    assert result["status"] == "error"
+    assert "escapes" in result["error"]
+
+
+def test_observe_flattens_multi_file_view(cloned_repo):
+    clone = cloned_repo.get_repo_path("fx")
+    (clone / "a.txt").write_text("alpha")
+    (clone / "b.txt").write_text("beta")
+    text = cloned_repo._observe(
+        clone, {"repo": "fx"}, {"command": "view", "paths": ["a.txt", "b.txt"]}
+    )
+    assert "alpha" in text and "beta" in text
+
+
+# --- solve surface ---------------------------------------------------------
+
+
+def test_solve_command_table_includes_diff_and_lint():
+    assert "diff" in agent.SOLVE_COMMANDS
+    assert "lint" in agent.SOLVE_COMMANDS
+
+
+def test_solve_prompt_documents_new_commands():
+    assert "diff" in agent.SOLVE_SYSTEM
+    assert "lint" in agent.SOLVE_SYSTEM
+    assert "paths" in agent.SOLVE_SYSTEM
+
+
+def test_parse_action_unknown_command_mentions_new_verbs(no_config, tmp_path):
+    agent_t = SWEAgent("t", tmp_base=str(tmp_path))
+    action, err = agent_t._parse_action('{"command": "burn"}')
+    assert action is None
+    assert "diff" in err and "lint" in err
+
+
+def test_observe_routes_diff_command(cloned_repo, monkeypatch):
+    def fake_run(cmd, cwd=None, timeout=300, **kwargs):
+        if cmd[:2] == ["git", "status"]:
+            return FakeResult(0, stdout="M tracked.txt")
+        return FakeResult(0, stdout="")
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    text = cloned_repo._observe(
+        cloned_repo.get_repo_path("fx"), {"repo": "fx"}, {"command": "diff"}
+    )
+    assert "M tracked.txt" in text
+
+
+def test_observe_routes_lint_command(cloned_repo, monkeypatch):
+    def fake_run(cmd, cwd=None, timeout=300, **kwargs):
+        return FakeResult(0, stdout="All checks passed!")
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    text = cloned_repo._observe(
+        cloned_repo.get_repo_path("fx"), {"repo": "fx"}, {"command": "lint"}
+    )
+    assert text.startswith("lint passed:")
