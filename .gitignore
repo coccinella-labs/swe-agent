@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 
+# Virtual environments
+.venv/
+
 # OS clutter
 .DS_Store
 Thumbs.db
