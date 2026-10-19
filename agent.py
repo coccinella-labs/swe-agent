@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from driver import CapReached, Driver, DriverError
+from sandbox import executor_from_env
 
 ORG = "coccinella-labs"
 CONFIG_URL = f"https://raw.githubusercontent.com/{ORG}/config/main/repos.json"
@@ -69,6 +70,7 @@ class SWEAgent:
         self.driver_factory = driver_factory
         self.on_event = on_event
         self.last_error: str | None = None
+        self.executor = executor_from_env()
         self._load_repos()
         self._load_skills()
 
@@ -346,7 +348,7 @@ class SWEAgent:
         pattern = task.get("pattern")
         if not isinstance(pattern, str) or not pattern:
             return self._task_error(task, "search needs a string 'pattern'")
-        result = self._run(
+        result = self.executor.run(
             ["git", "-C", str(clone), "grep", "-n", "-I", "--", pattern],
             timeout=60,
         )
@@ -395,7 +397,7 @@ class SWEAgent:
         parts = []
         for label, args in steps:
             try:
-                result = self._run(args, cwd=clone, timeout=60)
+                result = self.executor.run(args, cwd=clone, timeout=60)
             except subprocess.SubprocessError as exc:
                 return self._task_error(task, f"git {label} could not run: {exc}")
             if result.returncode != 0:
@@ -415,7 +417,7 @@ class SWEAgent:
 
     def _op_lint(self, clone: Path, task: dict) -> dict:
         try:
-            result = self._run(["ruff", "check", "."], cwd=clone, timeout=120)
+            result = self.executor.run(["ruff", "check", "."], cwd=clone, timeout=120)
         except FileNotFoundError:
             return self._task_error(task, "ruff is not installed in this environment")
         except subprocess.SubprocessError as exc:
@@ -440,7 +442,7 @@ class SWEAgent:
         if command is None:
             return self._task_error(task, "no recognisable test command in this repo")
         try:
-            result = self._run(command, cwd=clone, timeout=600)
+            result = self.executor.run(command, cwd=clone, timeout=600)
         except subprocess.SubprocessError as exc:
             return self._task_error(task, f"test run could not complete: {exc}")
         tail = "\n".join(

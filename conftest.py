@@ -4,6 +4,12 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _offline_sandbox_env(monkeypatch):
+    """Keep the whole suite hermetic: no sandbox mode leaks into any test."""
+    monkeypatch.delenv("SWE_AGENT_SANDBOX", raising=False)
+
+
 class FakeResult:
     def __init__(self, returncode=0, stdout="", stderr=""):
         self.returncode = returncode
