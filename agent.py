@@ -50,6 +50,7 @@ def _env_float_ceiling(name: str, default: float) -> float:
         return default
     return value if value > 0 else default
 
+
 SOLVE_SYSTEM = """You are a software engineering agent working in a local clone of the org repo {org}/{repo}. Complete the assigned task with the smallest correct change and no drive-by edits.
 
 Reply with EXACTLY ONE JSON object and nothing else, choosing one command:

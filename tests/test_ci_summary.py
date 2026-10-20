@@ -13,11 +13,17 @@ _SPEC.loader.exec_module(_mod)
 build_report = _mod.build_report
 
 
-def _evidence(tmp_path, turns_done="2", cost="0.000012", test_obs="pass", lint_obs="clean"):
+def _evidence(
+    tmp_path, turns_done="2", cost="0.000012", test_obs="pass", lint_obs="clean"
+):
     transcript = tmp_path / "transcripts" / "swe-agent" / "run.jsonl"
     transcript.parent.mkdir(parents=True)
     entries = [
-        {"turn": 1, "action": {"command": "view", "path": "calc.py"}, "observation": "ok"},
+        {
+            "turn": 1,
+            "action": {"command": "view", "path": "calc.py"},
+            "observation": "ok",
+        },
         {"turn": 2, "action": {"command": "test"}, "observation": test_obs},
         {"turn": 3, "action": {"command": "lint"}, "observation": lint_obs},
     ]
@@ -72,14 +78,19 @@ def test_report_truncates_long_observations(tmp_path):
 @pytest.mark.parametrize("command", ["test", "lint"])
 def test_last_matching_wins(tmp_path, command):
     transcript = tmp_path / "t.jsonl"
-    transcript.write_text("\n".join(
-        json.dumps(e)
-        for e in (
-            {"turn": 1, "action": {"command": command}, "observation": "first"},
-            {"turn": 2, "action": {"command": command}, "observation": "later"},
+    transcript.write_text(
+        "\n".join(
+            json.dumps(e)
+            for e in (
+                {"turn": 1, "action": {"command": command}, "observation": "first"},
+                {"turn": 2, "action": {"command": command}, "observation": "later"},
+            )
         )
-    ) + "\n")
+        + "\n"
+    )
     result = tmp_path / "result.json"
-    result.write_text(json.dumps({"status": "ok", "data": {"transcript": str(transcript)}}))
+    result.write_text(
+        json.dumps({"status": "ok", "data": {"transcript": str(transcript)}})
+    )
     report = build_report(result)
     assert "later" in report
