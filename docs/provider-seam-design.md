@@ -123,8 +123,15 @@ get fixed in the implementation commit, not silently.
   driver; the file is deleted after any live run per the standing
   protocol. Placeholder strings are refused the same way the
   Anthropic dry-run gate refuses them.
-- CI: a future lane only; the label-trigger workflow is out of scope
-  here.
+- CI: landed meanwhile. The label-trigger workflow shipped in PR #8,
+  the interim selection `SWE_AGENT_PROVIDER=gemini` with
+  `gemini-3.8-flash` landed in PR #14 (maintainer decision while the
+  Anthropic console account had no API credit balance), and the
+  solve-step `GH_TOKEN` export exists to keep `gh issue view` working
+  on the runner (runs 39356118027, 39356775752, 39357533789 on
+  issue #2 recorded the death and the regression and the fix in
+  PR #13 and PR #15). Both provider secrets now sit in the repo
+  settings, scanned by the artifact leak scan.
 - The executor contract test that asserts no key ever enters container
   argv extends to cover the Gemini key name.
 
@@ -158,18 +165,88 @@ leaderboard lands in CI in this lane.
 
 1. The DECISION in section 1: default `gemini-3.8-flash`, alternate
    `gemini-3.6-flash`, pro-analog optional. Confirm or reweight.
+   (Executed: shipped in PR #11 as v1.12.0.)
 2. Whether `SWE_AGENT_PROVIDER` should also be readable from the task
    JSON (`"provider": "gemini"`), or environment-only in v1;
    environment-only is the recommendation, keeping the task schema
-   untouched.
+   untouched. (Executed: environment-only shipped in PR #11.)
 3. Exact `PRICES` numeric entries for the selected models come from
    ai.google.dev/gemini-api/docs/pricing at implementation time, with
    the page state recorded in the PR body as evidence, since pricing
-   pages drift faster than this doc.
+   pages drift faster than this doc. (Executed: 0.75/3.75 landed in
+   PR #11, fetched 2026-10-20.)
 4. The Queued driver lane off the same evidence: add
    `claude-sonnet-5-5` to PRICES and redefault `SWE_AGENT_MODEL`
-   before the first live run on issue #2, or knowingly run on the
-   deprecated 4-5 endpoint through its 2026-11-30 retirement. The
-   fallback-free posture favors redefaulting; the exact lane shape
-   (inside this seam implementation versus a separate small fix PR)
-   is the author's recommendation only after your go.
+   before the first live run on issue #2. (Executed: PR #10, v1.11.1.)
+
+## 9. Third provider candidate: openrouter/auto (evidence 2026-10-20)
+
+Maintainer direction arrived with a live `sk-or-v1` key: evaluate
+OpenRouter's auto router as a third provider behind the seam.
+
+### 9.1 Doc and live evidence, recorded here
+
+- Endpoint (openrouter.ai/openrouter/auto/llms.txt, fetched
+  2026-10-20): `POST https://openrouter.ai/api/v1/chat/completions`,
+  Bearer auth. Model id `openrouter/auto`. Not available through EU
+  in-region routing.
+- Schema: OpenAI Chat-compatible. `messages` take native roles
+  `system` / `user` / `assistant` (no role mapping needed, unlike the
+  Gemini seam's assistant-to-model map); output cap is `max_tokens`.
+- Response: `choices[0].message.content`, normalized
+  `finish_reason` (`stop`, `length`, `tool_calls`, `error`),
+  `model` echoing the actually routed model, and `usage` carrying
+  `prompt_tokens` / `completion_tokens` / `total_tokens`,
+  `completion_tokens_details.reasoning_tokens`, and `cost`: the
+  request's cost in credits, directly comparable to USD.
+- Live probe with the handed-over key (recorded here, GET-met
+  first via `/api/v1/auth/key`: HTTP 200, label
+  `sk-or-v1-443...e76`, free tier, `usage` 0, no hard limit):
+  one call routed to `deepseek/deepseek-v4.1-flash-1017`,
+  HTTP 200, `usage.cost` 2.01e-05, `finish_reason` length, and
+  `content` None after 8 max_tokens, because the routed reasoning
+  model consumed the entire output budget thinking before emitting
+  any text. Two consequences for design below.
+- Error mapping: 401 invalid key, 402 insufficient credits,
+  403 spend limit, 429 rate limit, 502 upstream failure (failed
+  generations are not billed).
+
+### 9.2 Proposed decisions, awaiting review
+
+1. Provider name `openrouter`, default model `openrouter/auto`,
+   selected by `SWE_AGENT_PROVIDER=openrouter`, environment-only like
+   the other two; key from `OPENROUTER_API_KEY` then
+   `/tmp/coccinella-labs/openrouter_key` (0600), placeholder refused
+   at construction.
+2. Cap accounting for this provider is **response-reported**:
+   `usage.cost` is the authoritative estimate and accumulates into
+   the same ledger and cap. No static `PRICES` row is possible for a
+   router whose per-call routing (and pricing) changes; if a response
+   comes back without `usage.cost`, the driver fails closed with the
+   standard no-price error rather than guessing.
+3. `finish_reason: length` with empty or missing content is a clean
+   `DriverError` (fail fast), not a loop turn: the probe showed a
+   reasoning-hungry routed model can burn the whole output budget on
+   thinking; burning solve turns on that is waste. Recommendation on
+   record: `max_output_tokens` should default higher than 2048 for
+   this provider (say 4096) unless config says otherwise.
+4. The routed model flows into `usage_summary` as
+   `routed_model`, per-call, so evidence files show what actually
+   answered.
+
+### 9.3 New open questions from this addition
+
+1. Implement now, in what order relative to the pending CI retest of
+   PR #15 on issue #2? Author's recommendation: land PR #15 and its
+   retest first (they are one merge away from a fully proven surface),
+   then the openrouter seam lane as `feat:` (v1.13.0).
+2. After the Anthropic credits land: does the CI interim posture stay
+   gemini, or does the label test move to openrouter/auto's free-tier
+   credits? Author's recommendation: keep gemini for CI determinism
+   (a router that changes models mid-benchmark makes evidence harder
+   to read), use openrouter/auto on-host for cheap exploratory solves.
+3. The automatic fallback lane proposed earlier (anthropic attempt,
+   credential-class failure, then gemini) remains unadopted by
+   decision; re-evaluate it once three providers exist, since a
+   try/except over provider selection becomes cheap then.
+
