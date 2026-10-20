@@ -50,7 +50,7 @@ reliable. The live run on issue #2 therefore carries a deadline
 consideration: either redefault before the first live run or accept
 the deprecated endpoint knowingly. That redefault (PRICES entries for
 `claude-sonnet-5-5` plus the `SWE_AGENT_MODEL` default change) is
-listed as open question 4 below and needs its own lane word.
+approved to redefault; the targeted lane is PR #10 (fix: redefault driver model to claude-sonnet-5-5), which lands the PRICES row and README line alongside.
 
 ## 2. Non-goals
 
@@ -84,7 +84,8 @@ by construction). `SWEAgent._make_driver` gains a provider step:
   `SWE_AGENT_SANDBOX` selection semantics.
 
 `SWE_AGENT_MODEL` continues to select the model within the provider;
-the Anthropic default stays `claude-sonnet-4-5`, the Gemini default
+the Anthropic default is redefaulted to `claude-sonnet-5-5` (see
+section 1a), the Gemini default
 per DECISION above. Per-provider price entries land in the same
 `PRICES` table; model ids are unique across providers today, and the
 "no price entry for model" error remains the guardrail for anything
