@@ -26,6 +26,30 @@ SOLVE_COMMANDS = ("view", "search", "edit", "test", "submit", "diff", "lint")
 
 SOLVE_MAX_TURNS = 10
 
+
+def _env_int_ceiling(name: str, default: int) -> int:
+    """Ceiling from the environment for one run; bad values mean absent."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if 1 <= value <= 50 else default
+
+
+def _env_float_ceiling(name: str, default: float) -> float:
+    """Dollar ceiling from the environment; bad values mean absent."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
 SOLVE_SYSTEM = """You are a software engineering agent working in a local clone of the org repo {org}/{repo}. Complete the assigned task with the smallest correct change and no drive-by edits.
 
 Reply with EXACTLY ONE JSON object and nothing else, choosing one command:
@@ -696,6 +720,29 @@ class SWEAgent:
 
     def _solve(self, task: dict) -> dict:
         """Model-driven loop within one clone; output is a diff, never a push."""
+
+        # CI ceilings: environment-set values clamp task input, so issue
+        # text cannot raise a run's turn or cost limits. Values above the
+        # hard 50-turn bound remain errors; the ceiling only tightens.
+        # Invalid env values fall back to the default ceiling.
+        turns_ceiling = _env_int_ceiling("SWE_AGENT_MAX_TURNS", 50)
+        cost_ceiling = _env_float_ceiling("SWE_AGENT_COST_CAP_USD", 2.0)
+        clamped: dict | None = None
+        max_turns = task.get("max_turns", SOLVE_MAX_TURNS)
+        if not isinstance(max_turns, int) or not 1 <= max_turns <= 50:
+            return self._task_error(task, "max_turns must be an integer from 1 to 50")
+        raw_cost = task.get("cost_cap_usd", 2.0)
+        if max_turns > turns_ceiling or (
+            isinstance(raw_cost, (int, float)) and raw_cost > cost_ceiling
+        ):
+            clamped = {}
+            if max_turns > turns_ceiling:
+                clamped["max_turns"] = max_turns
+                max_turns = turns_ceiling
+            if isinstance(raw_cost, (int, float)) and raw_cost > cost_ceiling:
+                clamped["cost_cap_usd"] = raw_cost
+                task = dict(task)
+                task["cost_cap_usd"] = cost_ceiling
         repo = task["repo"]
         clone = self.get_repo_path(repo)
         if clone is None:
@@ -706,9 +753,6 @@ class SWEAgent:
             brief = self._solve_brief(clone, task)
         except ValueError as exc:
             return self._task_error(task, str(exc))
-        max_turns = task.get("max_turns", SOLVE_MAX_TURNS)
-        if not isinstance(max_turns, int) or not 1 <= max_turns <= 50:
-            return self._task_error(task, "max_turns must be an integer from 1 to 50")
         if self.driver_factory:
             driver = self.driver_factory()
         else:
@@ -722,6 +766,7 @@ class SWEAgent:
                     "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     "instruction": brief[:4000],
                     "max_turns": max_turns,
+                    **({"clamped": clamped} if clamped else {}),
                 }
             }
         ]

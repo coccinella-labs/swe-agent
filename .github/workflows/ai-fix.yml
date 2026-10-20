@@ -1,0 +1,139 @@
+name: ai-fix
+
+# The label trigger: a maintainer adds the ai-fix label to an issue and
+# this workflow runs a sandboxed solve, pushes the result as a branch,
+# and opens a draft PR plus an evidence comment. The design lives in
+# docs/ci-label-trigger-design.md and every invariant here is pinned by
+# tests/test_ci_workflow.py.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+  contents: write
+
+concurrency:
+  group: ai-fix-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  solve:
+    # Only the ai-fix label starts a run; every other labeled event
+    # exits here without spending anything.
+    if: github.event.label.name == 'ai-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Refuse to proceed if the label was revoked while queued
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LABELS=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number }}" --jq '[.labels[].name] | join(" ")')
+          case " $LABELS " in
+            *" ai-fix "*) echo "label present; proceeding" ;;
+            *) echo "aborted=true" >> "$GITHUB_OUTPUT"
+               echo "ai-fix was removed while the run was queued; aborting"
+               exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+
+      - name: Prepare the target clone where the agent expects it
+        run: |
+          mkdir -p /tmp/coccinella-labs
+          git clone "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" /tmp/coccinella-labs/swe-agent
+
+      - name: Build the sandbox image (per-run supply, per the design)
+        run: docker build -f docker/sandbox.Dockerfile -t coccinella-labs/swe-agent-sandbox .
+
+      - name: Solve inside the sandbox; ceilings hold regardless of task input
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SWE_AGENT_SANDBOX: docker
+          SWE_AGENT_MAX_TURNS: "15"
+          SWE_AGENT_COST_CAP_USD: "1.5"
+        run: |
+          mkdir -p /tmp/ai-fix
+          set -o pipefail
+          TASK=$(printf '{"repo": "swe-agent", "operation": "solve", "issue": %s, "max_turns": 15, "cost_cap_usd": 1.5}' "${{ github.event.issue.number }}")
+          python3 agent.py task "$TASK" | tee /tmp/ai-fix/result.json
+
+      - name: Collect the diff as evidence
+        if: always()
+        run: |
+          cd /tmp/coccinella-labs/swe-agent
+          git diff HEAD > /tmp/ai-fix/fix.diff || true
+
+      - name: Scan the artifacts for key leakage
+        if: always()
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          KEY8="${ANTHROPIC_API_KEY:0:8}"
+          if [ -n "$KEY8" ] && grep -rqF -- "$KEY8" /tmp/coccinella-labs/transcripts /tmp/ai-fix 2>/dev/null; then
+            echo "the model key leaked into the artifacts; failing the run"
+            exit 1
+          fi
+
+      - name: Upload the evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-evidence-issue-${{ github.event.issue.number }}
+          path: |
+            /tmp/ai-fix/result.json
+            /tmp/ai-fix/fix.diff
+            /tmp/coccinella-labs/transcripts/
+          if-no-files-found: warn
+
+      - name: Read the task outcome
+        id: outcome
+        if: always()
+        run: |
+          echo "status=$(python3 -c 'import json; print(json.load(open("/tmp/ai-fix/result.json")).get("status","error"))' 2>/dev/null || echo error)" >> "$GITHUB_OUTPUT"
+          if [ -s /tmp/ai-fix/result.json ]; then
+            python3 scripts/ai-fix_summary.py /tmp/ai-fix/result.json /tmp/ai-fix/run_summary.md
+            echo "summary_ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report a failed run on the issue
+        if: steps.outcome.outputs.status != 'ok' && steps.gate.outputs.aborted != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body "The ai-fix run could not produce a patch; see this run's log and the evidence artifact. Refs #${{ github.event.issue.number }}."
+
+      - name: Push the branch and open the draft PR
+        if: steps.outcome.outputs.status == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CLONE=/tmp/coccinella-labs/swe-agent
+          BRANCH=ai-fix/issue-${{ github.event.issue.number }}
+          cd "$CLONE"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git add -A
+          git -c user.name="ai-fix automation" -c user.email="ai-fix@users.noreply.github.com" commit -m "fix: patch for issue ${{ github.event.issue.number }} from the label trigger" || echo "nothing to commit"
+          git push origin "HEAD:refs/heads/$BRANCH"
+          PURL=$(gh pr create --draft --base main --head "$BRANCH" --title "fix: patch for issue #${{ github.event.issue.number }}" --body "Generated by the ai-fix label trigger from the sandboxed solve run. Review before merge; the automation cannot approve, merge, or close anything. Refs #${{ github.event.issue.number }}.")
+          {
+            cat /tmp/ai-fix/run_summary.md
+            echo ""
+            echo "PR: $PURL"
+            echo "Refs #${{ github.event.issue.number }}"
+          } > /tmp/ai-fix/comment.md
+
+      - name: Post the run summary on the issue
+        if: steps.outcome.outputs.status == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment "${{ github.event.issue.number }}" --body "$(cat /tmp/ai-fix/comment.md)"
+
+      - name: Consume the ai-fix label with a re-run on re-add
+        if: steps.gate.outputs.aborted != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue edit "${{ github.event.issue.number }}" --remove-label ai-fix
