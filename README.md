@@ -248,7 +248,7 @@ if needed, and loops the model through a command allowlist until it calls
 
 ```bash
 export ANTHROPIC_API_KEY=...        # required; never committed
-export SWE_AGENT_MODEL=claude-sonnet-4-5   # optional override
+export SWE_AGENT_MODEL=claude-sonnet-5-5   # optional override
 python agent.py task '{"repo": "calculator", "operation": "solve",
   "issue": 4, "max_turns": 12, "cost_cap_usd": 2.0}'
 ```

@@ -14,12 +14,13 @@ from dataclasses import dataclass
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
-DEFAULT_MODEL = "claude-sonnet-4-5"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 # Dollars per million tokens. Estimates for cap enforcement only; override
 # via the prices argument when these drift from the real price sheet.
 PRICES = {
     "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-5-5": {"input": 2.0, "output": 10.0},
     "claude-sonnet-4-5-20250929": {"input": 3.0, "output": 15.0},
     "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
     "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
