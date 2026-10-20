@@ -94,7 +94,8 @@ be talked around:
 - Driver layer: unchanged from current code; the cap exhaustion path
   ("cap exhausted", refusal of the next call) already exists and is
   what the clamp feeds into.
-- Time layer: the job carries a hard timeout (proposed 30 minutes) so
+- Time layer: the job carries a hard timeout (20 minutes, settled in
+  review) so
   a wedged container cannot outlive the runner's patience.
 
 DECISION (recommended): no aggregate spend ledger in the first
@@ -138,13 +139,16 @@ version has run at least once for real.
 
 ## 8. Open questions for review
 
-1. Exact caps: turns 15 and 1.50 USD are proposed; alternatives are
-   turns 20 and 2.00 USD matching the local defaults. The difference
-   is risk appetite only.
-2. Image supply: build from the Dockerfile per run (about 60 to 90
-   seconds of runner time, no registry needed) versus publishing the
-   image to GHCR and pulling (faster, adds a publish step). Building
-   per run is the first recommendation.
-3. The ai-fix label flow assumes one label named exactly ai-fix;
-   naming alternatives (ai-fix versus bot-fix) are cosmetic but must
-   match the workflow file when it lands.
+Settled in review on 2026-10-20; recorded here so the canon carries the
+answers, not just the proposals:
+
+1. Exact caps: turns 15 and 1.50 USD stand; job timeout 20 minutes
+   (shortened from the proposed 30) per the reviewer's risk call.
+2. Image supply: build from the Dockerfile per run; no registry, no
+   GHCR publishing in v1.
+3. Label naming: exactly ai-fix; the workflow file must match.
+
+The four in-text DECISION items are likewise settled as recommended:
+label consumed by automation after use, draft PR until a human flips
+it, no aggregate spend ledger in v1, first implementation scoped to
+swe-agent itself.
