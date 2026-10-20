@@ -53,6 +53,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
           SWE_AGENT_PROVIDER: gemini
           SWE_AGENT_MODEL: gemini-3.8-flash
           SWE_AGENT_SANDBOX: docker
