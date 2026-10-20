@@ -8,7 +8,14 @@ import sys
 import time
 from pathlib import Path
 
-from driver import CapReached, Driver, DriverError
+from driver import (
+    DRIVER_PROVIDERS,
+    CapReached,
+    Driver,
+    DriverError,
+    get_provider_class,
+    provider_name,
+)
 from sandbox import executor_from_env
 
 ORG = "coccinella-labs"
@@ -553,7 +560,14 @@ class SWEAgent:
     # --- solve loop --------------------------------------------------------
 
     def _make_driver(self, task: dict) -> Driver:
-        return Driver(
+        provider = provider_name()
+        cls = get_provider_class(provider)
+        if cls is None:
+            raise DriverError(
+                f"unknown SWE_AGENT_PROVIDER {provider!r}; expected one of "
+                f"{sorted(DRIVER_PROVIDERS)}"
+            )
+        return cls(
             model=task.get("model"),
             max_output_tokens=task.get("max_output_tokens", 2048),
             cost_cap_usd=task.get("cost_cap_usd", 2.0),
@@ -754,10 +768,14 @@ class SWEAgent:
             brief = self._solve_brief(clone, task)
         except ValueError as exc:
             return self._task_error(task, str(exc))
-        if self.driver_factory:
-            driver = self.driver_factory()
-        else:
-            driver = self._make_driver(task)
+        try:
+            driver = (
+                self.driver_factory()
+                if self.driver_factory
+                else self._make_driver(task)
+            )
+        except DriverError as exc:
+            return self._task_error(task, f"driver selection failed: {exc}")
         transcript_path = self._transcript_path(repo)
         lines = [
             {
