@@ -1,8 +1,9 @@
 """Loop-hardening tests: search cwd under sandbox and the op-crash guard."""
 
 import json
+from pathlib import Path
 
-from test_provider_seam import solve_repo, task  # noqa: F401
+from test_provider_seam import task
 
 import driver
 
@@ -41,7 +42,7 @@ def test_op_crash_becomes_an_observation_not_a_run_death(solve_repo):
     assert result["status"] == "ok"
     lines = [
         json.loads(line)
-        for line in open(result["data"]["transcript"]).read().splitlines()
+        for line in Path(result["data"]["transcript"]).read_text().splitlines()
     ]
     search_line = next(l for l in lines if isinstance(l.get("action"), dict))
     assert "internal failure" in search_line["observation"]
