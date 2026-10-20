@@ -25,6 +25,10 @@ GEMINI_API_URL = (
 GEMINI_DEFAULT_MODEL = "gemini-3.8-flash"
 GEMINI_KEY_FILE = Path("/tmp/coccinella-labs/gemini_key")
 
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_DEFAULT_MODEL = "openrouter/auto"
+OPENROUTER_KEY_FILE = Path("/tmp/coccinella-labs/openrouter_key")
+
 # Dollars per million tokens. Estimates for cap enforcement only; override
 # via the prices argument when these drift from the real price sheet.
 PRICES = {
@@ -43,6 +47,7 @@ PRICES = {
 DRIVER_PROVIDERS = {
     "anthropic": "Driver",
     "gemini": "GeminiDriver",
+    "openrouter": "OpenRouterDriver",
 }
 
 
@@ -92,7 +97,7 @@ class Driver:
     ):
         self.model = model or os.environ.get("SWE_AGENT_MODEL", DEFAULT_MODEL)
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        self.max_output_tokens = max_output_tokens
+        self.max_output_tokens = max_output_tokens or 2048
         self.cost_cap_usd = cost_cap_usd
         self.prices = prices if prices is not None else dict(PRICES)
         self.timeout = timeout
@@ -228,7 +233,7 @@ class GeminiDriver:
     ):
         self.model = model or os.environ.get("SWE_AGENT_MODEL", GEMINI_DEFAULT_MODEL)
         self.api_key = _resolve_gemini_key(api_key, key_file)
-        self.max_output_tokens = max_output_tokens
+        self.max_output_tokens = max_output_tokens or 2048
         self.cost_cap_usd = cost_cap_usd
         self.prices = prices if prices is not None else dict(PRICES)
         self.timeout = timeout
@@ -321,6 +326,156 @@ class GeminiDriver:
             headers={
                 "content-type": "application/json",
                 "x-goog-api-key": self.api_key,
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+        except (OSError, urllib.error.URLError) as exc:
+            raise DriverError(f"model call failed: {exc}") from exc
+
+
+_OPENROUTER_PLACEHOLDER_KEYS = {
+    "",
+    "openrouter_api_key",
+    "placeholder",
+    "your-api-key-here",
+}
+
+
+def _resolve_openrouter_key(api_key, key_file):
+    """Environment first, then the on-disk keyfile; refuse placeholders."""
+    key = (api_key or os.environ.get("OPENROUTER_API_KEY", "")).strip()
+    if key:
+        return key
+    path = Path(key_file) if key_file else OPENROUTER_KEY_FILE
+    try:
+        raw = path.read_text().strip()
+    except FileNotFoundError:
+        raise DriverError(
+            f"no openrouter api key: set OPENROUTER_API_KEY or write {path} (mode 0600)"
+        ) from None
+    except OSError as exc:
+        raise DriverError(f"openrouter key file unreadable: {exc}") from exc
+    if not raw or raw.lower() in _OPENROUTER_PLACEHOLDER_KEYS:
+        raise DriverError(f"placeholder or empty openrouter key at {path}")
+    return raw
+
+
+class OpenRouterDriver:
+    """OpenRouter chat-completions client with the same cap discipline.
+
+    Cap accounting is response-reported: usage.cost in credits is the
+    authoritative estimate, and a router whose per-call model (and
+    pricing) changes admits no static price table. A response without
+    a cost fails closed instead of guessing.
+    """
+
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        max_output_tokens: int | None = 4096,
+        cost_cap_usd: float = 2.0,
+        prices: dict | None = None,
+        timeout: int = 120,
+        key_file: str | None = None,
+    ):
+        self.model = model or os.environ.get(
+            "SWE_AGENT_MODEL", OPENROUTER_DEFAULT_MODEL
+        )
+        self.api_key = _resolve_openrouter_key(api_key, key_file)
+        self.max_output_tokens = max_output_tokens or 4096
+        self.cost_cap_usd = cost_cap_usd
+        self.prices = prices if prices is not None else dict(PRICES)
+        self.timeout = timeout
+        self._calls = 0
+        self._spent = 0.0
+        self._input_tokens = 0
+        self._output_tokens = 0
+        self.last_routed_model: str | None = None
+
+    def chat(self, system, messages) -> ChatResult:
+        """One chat-completions call; accumulates usage and enforces the cap."""
+        body_messages = [{"role": "system", "content": system}]
+        for message in messages:
+            role = message.get("role")
+            if role not in {"user", "assistant"}:
+                raise DriverError(
+                    f"unsupported message role {role!r} for the openrouter provider"
+                )
+            body_messages.append({"role": role, "content": message.get("content", "")})
+        body = {
+            "model": self.model,
+            "messages": body_messages,
+            "max_tokens": self.max_output_tokens,
+        }
+        status, raw = self._send(json.dumps(body).encode())
+        if status != 200:
+            head = raw[:200].decode(errors="replace")
+            raise DriverError(f"model call returned HTTP {status}: {head}")
+        try:
+            data = json.loads(raw)
+            message = data["choices"][0]["message"]
+            text = message.get("content") or ""
+            finish = data["choices"][0].get("finish_reason")
+            self.last_routed_model = data.get("model")
+            usage = data.get("usage") or {}
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise DriverError(f"unparseable model response: {exc}") from exc
+        if not text and finish == "length":
+            raise DriverError(
+                f"routed model {self.last_routed_model!r} emitted no content "
+                f"with finish_reason=length; raise max_output_tokens"
+            )
+        if not "cost" in usage:
+            raise DriverError(
+                "response carried no usage.cost; the openrouter provider "
+                "is response-reported and cannot enforce a cap without it"
+            )
+        in_tokens = int(usage.get("prompt_tokens", 0))
+        out_tokens = int(usage.get("completion_tokens", 0))
+        cost = float(usage["cost"])
+        self._input_tokens += in_tokens
+        self._output_tokens += out_tokens
+        self._calls += 1
+        self._spent += cost
+        if self.cost_cap_usd is not None and self._spent > self.cost_cap_usd:
+            raise CapReached(
+                f"cost cap of {self.cost_cap_usd} USD exceeded after about "
+                f"{self._spent:.4f} USD"
+            )
+        return ChatResult(
+            text=text,
+            stop_reason=finish,
+            input_tokens=in_tokens,
+            output_tokens=out_tokens,
+            cost_estimate=cost,
+        )
+
+    def usage_summary(self) -> dict:
+        return {
+            "provider": "openrouter",
+            "model": self.model,
+            "routed_model": self.last_routed_model,
+            "calls": self._calls,
+            "input_tokens": self._input_tokens,
+            "output_tokens": self._output_tokens,
+            "cost_estimate": round(self._spent, 6),
+        }
+
+    def _send(self, body: bytes) -> tuple[int, bytes]:
+        """The HTTP boundary; the only thing offline tests need to stub."""
+        request = urllib.request.Request(
+            OPENROUTER_API_URL,
+            data=body,
+            method="POST",
+            headers={
+                "content-type": "application/json",
+                "authorization": f"Bearer {self.api_key}",
+                "x-title": "coccinella-labs-swe-agent",
             },
         )
         try:
