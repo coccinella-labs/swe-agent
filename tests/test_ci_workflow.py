@@ -56,7 +56,19 @@ def test_image_built_per_run():
 def test_model_key_comes_only_from_the_secret():
     assert "${{ secrets.ANTHROPIC_API_KEY }}" in TEXT
     found = set(re.findall(r"secrets\.\w+", TEXT))
-    assert found == {"secrets.ANTHROPIC_API_KEY"}
+    assert found == {"secrets.ANTHROPIC_API_KEY", "secrets.GEMINI_API_KEY"}
+
+
+def test_gemini_provider_temporarily_selected_with_its_key():
+    # Interim posture 2026-10-20 while the Anthropic console account
+    # has no API credit balance: the solve runs on gemini-3.8-flash
+    # with its own secret. Reverts to the anthropic default when
+    # credits land; the fallback lane decision remains open.
+    assert "SWE_AGENT_PROVIDER: gemini" in TEXT
+    assert "SWE_AGENT_MODEL: gemini-3.8-flash" in TEXT
+    assert "GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}" in TEXT
+    solve = TEXT[TEXT.index("Solve inside the sandbox") :]
+    assert "GEMINI_API_KEY" in solve.split("- name: Scan the artifacts")[0]
 
 
 def test_sandbox_carries_no_key_in_its_arguments():
@@ -68,7 +80,9 @@ def test_sandbox_carries_no_key_in_its_arguments():
 
 
 def test_transcript_key_prefix_scan_present():
-    assert "ANTHROPIC_API_KEY:0:8" in TEXT
+    # the scan loops over both provider keys with the same prefix rule
+    assert "for name in ANTHROPIC_API_KEY GEMINI_API_KEY" in TEXT
+    assert "${!name:0:8}" in TEXT
 
 
 def test_refs_template_present_and_no_closing_keywords():
