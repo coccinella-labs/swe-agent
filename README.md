@@ -253,6 +253,25 @@ python agent.py task '{"repo": "calculator", "operation": "solve",
   "issue": 4, "max_turns": 12, "cost_cap_usd": 2.0}'
 ```
 
+### Choosing the provider
+
+Two engines sit behind the same loop, selected by environment only
+(never by the task JSON):
+
+```bash
+export SWE_AGENT_PROVIDER=gemini     # anthropic (default) or gemini
+export GEMINI_API_KEY=...            # or a mode-0600 keyfile (see below)
+```
+
+- The Gemini default model is `gemini-3.8-flash`; `SWE_AGENT_MODEL`
+  overrides per provider, so a model id must match the selected engine
+  or the run fails closed on the missing price entry.
+- The Gemini key resolves from `GEMINI_API_KEY`, then from a keyfile at
+  `/tmp/coccinella-labs/gemini_key` (mode 0600); empty or placeholder
+  strings are refused before any run.
+- Cap accounting for Gemini treats thought tokens as output tokens,
+  matching the published output price that includes thinking tokens.
+
 Behavior worth knowing before first use:
 
 - The model can only issue `view`, `search`, `edit`, `diff`, `lint`,

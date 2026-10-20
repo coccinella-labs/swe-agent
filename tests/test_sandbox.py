@@ -116,6 +116,7 @@ def test_docker_run_carries_the_full_contract(monkeypatch, tmp_path):
     assert argv.count("-w") == 1 and argv[argv.index("-w") + 1] == "/work"
     joined = " ".join(argv)
     assert "ANTHROPIC_API_KEY" not in joined
+    assert "GEMINI_API_KEY" not in joined
     assert "GH_TOKEN" not in joined
 
 
