@@ -828,11 +828,7 @@ class SWEAgent:
                     "files_changed": (files.stdout or "").split(),
                     "diff": (diff.stdout or "")[:20000],
                     "transcript": transcript,
-                    "usage": {
-                        "input_tokens": reply.input_tokens,
-                        "output_tokens": reply.output_tokens,
-                        "cost_estimate": reply.cost_estimate,
-                    },
+                    "usage": driver.usage_summary(),
                 }
                 return {
                     "repo": repo,

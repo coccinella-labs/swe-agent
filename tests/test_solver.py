@@ -31,6 +31,16 @@ class FakeDriver:
             cost_estimate=30 / 1_000_000,
         )
 
+    def usage_summary(self) -> dict:
+        return {
+            "provider": "anthropic",
+            "model": "fake",
+            "calls": len(self.calls),
+            "input_tokens": 10 * len(self.calls),
+            "output_tokens": 20 * len(self.calls),
+            "cost_estimate": 30 * len(self.calls) / 1_000_000,
+        }
+
 
 @pytest.fixture
 def solve_repo(no_config, tmp_path):
@@ -101,6 +111,23 @@ def test_solve_scripts_view_edit_and_submit(solve_repo):
     assert "-    return a - b  # known bug" in data["diff"]
     assert "+    return a + b" in data["diff"]
     assert "a - b" not in (clone / "calc.py").read_text()
+
+
+def test_solve_reports_cumulative_not_last_call_usage(solve_repo):
+    a, _ = solve_repo
+    replies = [
+        view("calc.py"),
+        json.dumps({"command": "test"}),
+        json.dumps({"command": "submit"}),
+    ]
+    a.driver_factory = lambda: FakeDriver(replies)
+    result = a.execute_task(task())
+    assert result["status"] == "ok"
+    usage = result["data"]["usage"]
+    assert usage["calls"] == 3
+    assert usage["input_tokens"] == 30
+    assert usage["output_tokens"] == 60
+    assert usage["provider"] == "anthropic"
 
 
 def test_solve_writes_jsonl_transcript(solve_repo, tmp_path):

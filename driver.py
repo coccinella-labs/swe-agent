@@ -152,6 +152,7 @@ class Driver:
 
     def usage_summary(self) -> dict:
         return {
+            "provider": "anthropic",
             "model": self.model,
             "calls": self._calls,
             "input_tokens": self._input_tokens,
