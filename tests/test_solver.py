@@ -300,3 +300,67 @@ def test_solve_notes_event_callback(solve_repo):
     result = a.execute_task(task())
     assert result["status"] == "ok"
     assert events == [1, 2]
+
+
+def _transcript_lines(tmp_path):
+    files = list((tmp_path / "coccinella-labs" / "transcripts" / "fx").glob("*.jsonl"))
+    assert files
+    return [json.loads(line) for line in files[0].read_text().splitlines()]
+
+
+_submit = [json.dumps({"command": "submit"})]
+
+
+def test_solve_clamps_turns_to_env_ceiling(solve_repo, tmp_path, monkeypatch):
+    a, _ = solve_repo
+    monkeypatch.setenv("SWE_AGENT_MAX_TURNS", "15")
+    a.driver_factory = lambda: FakeDriver(_submit)
+    result = a.execute_task(task(max_turns=40))
+    assert result["status"] == "ok"
+    lines = _transcript_lines(tmp_path)
+    assert lines[0]["run"]["max_turns"] == 15
+    assert lines[0]["run"]["clamped"] == {"max_turns": 40}
+
+
+def test_solve_clamps_cost_cap_to_env_ceiling(solve_repo, tmp_path, monkeypatch):
+    a, _ = solve_repo
+    monkeypatch.setenv("SWE_AGENT_COST_CAP_USD", "1.5")
+    a.driver_factory = lambda: FakeDriver(_submit)
+    result = a.execute_task(task(cost_cap_usd=5.0))
+    assert result["status"] == "ok"
+    lines = _transcript_lines(tmp_path)
+    assert lines[0]["run"]["clamped"] == {"cost_cap_usd": 5.0}
+
+
+def test_solve_hard_ceiling_still_errors_above_fifty(solve_repo, monkeypatch):
+    a, _ = solve_repo
+    monkeypatch.setenv("SWE_AGENT_MAX_TURNS", "15")
+    a.driver_factory = lambda: FakeDriver(_submit)
+    result = a.execute_task(task(max_turns=99))
+    assert result["status"] == "error"
+    assert "1 to 50" in result["error"]
+
+
+def test_solve_invalid_env_ceiling_means_absent(solve_repo, tmp_path, monkeypatch):
+    a, _ = solve_repo
+    monkeypatch.setenv("SWE_AGENT_MAX_TURNS", "fifteen")
+    monkeypatch.setenv("SWE_AGENT_COST_CAP_USD", "bogus")
+    a.driver_factory = lambda: FakeDriver(_submit)
+    result = a.execute_task(task(max_turns=40, cost_cap_usd=5.0))
+    assert result["status"] == "ok"
+    lines = _transcript_lines(tmp_path)
+    # invalid ceilings fall back to defaults: turns stay 40 (under 50);
+    # the default 2 USD ceiling still clamps a 5 USD task input
+    assert lines[0]["run"]["max_turns"] == 40
+    assert lines[0]["run"]["clamped"] == {"cost_cap_usd": 5.0}
+
+
+def test_solve_without_env_has_no_clamped_record(solve_repo, tmp_path, monkeypatch):
+    a, _ = solve_repo
+    monkeypatch.delenv("SWE_AGENT_MAX_TURNS", raising=False)
+    monkeypatch.delenv("SWE_AGENT_COST_CAP_USD", raising=False)
+    a.driver_factory = lambda: FakeDriver(_submit)
+    result = a.execute_task(task(max_turns=40, cost_cap_usd=1.5))
+    assert result["status"] == "ok"
+    lines = _transcript_lines(tmp_path)
+    assert "clamped" not in lines[0]["run"]
