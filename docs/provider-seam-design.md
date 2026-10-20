@@ -245,6 +245,11 @@ OpenRouter's auto router as a third provider behind the seam.
    credits? Author's recommendation: keep gemini for CI determinism
    (a router that changes models mid-benchmark makes evidence harder
    to read), use openrouter/auto on-host for cheap exploratory solves.
+   (Executed 2026-10-20: gemini stalled the label runs twice on
+   vendor-side transient errors (run 4 HTTP 503 high demand, run 5
+   driver read timeout), so posture question resolved against the
+   recommendation in the other direction: CI moved to openrouter/auto
+   with the same ceilings; revisit when credits land.)
 3. The automatic fallback lane proposed earlier (anthropic attempt,
    credential-class failure, then gemini) remains unadopted by
    decision; re-evaluate it once three providers exist, since a

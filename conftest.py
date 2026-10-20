@@ -8,6 +8,10 @@ import pytest
 def _offline_sandbox_env(monkeypatch):
     """Keep the whole suite hermetic: no sandbox mode leaks into any test."""
     monkeypatch.delenv("SWE_AGENT_SANDBOX", raising=False)
+    # the transient-retry loop must never sleep for real in tests
+    import driver
+
+    monkeypatch.setattr(driver.time, "sleep", lambda *_: None)
 
 
 class FakeResult:

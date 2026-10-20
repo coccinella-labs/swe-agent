@@ -10,6 +10,7 @@ authoritative billing.
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ GEMINI_KEY_FILE = Path("/tmp/coccinella-labs/gemini_key")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_DEFAULT_MODEL = "openrouter/auto"
 OPENROUTER_KEY_FILE = Path("/tmp/coccinella-labs/openrouter_key")
+
+TRANSIENT_STATUSES = {429, 500, 502, 503, 504}
 
 # Dollars per million tokens. Estimates for cap enforcement only; override
 # via the prices argument when these drift from the real price sheet.
@@ -83,7 +86,38 @@ class ChatResult:
     cost_estimate: float
 
 
-class Driver:
+class _TransientRetry:
+    """Shared transient-failure retry for the provider transports.
+
+    Retries 429/5xx responses and network-level OSErrors (including
+    read timeouts) with fixed delays, then surfaces the last failure
+    through the driver error shapes as before. 400-class errors are
+    not transient and return immediately.
+    """
+
+    retry_delays: tuple = (5.0, 15.0)
+
+    def _send(self, body: bytes) -> tuple[int, bytes]:
+        attempts = len(self.retry_delays) + 1
+        last_status, last_raw, last_exc = 0, b"", None
+        for attempt in range(attempts):
+            if attempt:
+                time.sleep(self.retry_delays[attempt - 1])
+            try:
+                status, raw = self._send_once(body)
+            except (OSError, urllib.error.URLError) as exc:
+                last_exc = exc
+                continue
+            if status in TRANSIENT_STATUSES and attempt < attempts - 1:
+                last_status, last_raw = status, raw
+                continue
+            return status, raw
+        if last_exc is not None:
+            raise DriverError(f"model call failed: {last_exc}") from last_exc
+        return last_status, last_raw
+
+
+class Driver(_TransientRetry):
     """Anthropic Messages API client with cumulative cost tracking."""
 
     def __init__(
@@ -94,6 +128,7 @@ class Driver:
         cost_cap_usd: float = 2.0,
         prices: dict | None = None,
         timeout: int = 120,
+        retry_delays: tuple | None = None,
     ):
         self.model = model or os.environ.get("SWE_AGENT_MODEL", DEFAULT_MODEL)
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -101,6 +136,7 @@ class Driver:
         self.cost_cap_usd = cost_cap_usd
         self.prices = prices if prices is not None else dict(PRICES)
         self.timeout = timeout
+        self.retry_delays = retry_delays or (5.0, 15.0)
         self._calls = 0
         self._spent = 0.0
         self._input_tokens = 0
@@ -171,8 +207,8 @@ class Driver:
             return None
         return (in_tokens * price["input"] + out_tokens * price["output"]) / 1_000_000
 
-    def _send(self, body: bytes) -> tuple[int, bytes]:
-        """The HTTP boundary; the only thing offline tests need to stub."""
+    def _send_once(self, body: bytes) -> tuple[int, bytes]:
+        """One HTTP attempt; the retry loop lives in _TransientRetry."""
         request = urllib.request.Request(
             API_URL,
             data=body,
@@ -188,8 +224,8 @@ class Driver:
                 return resp.status, resp.read()
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read()
-        except (OSError, urllib.error.URLError) as exc:
-            raise DriverError(f"model call failed: {exc}") from exc
+        except (OSError, urllib.error.URLError):
+            raise
 
 
 _PLACEHOLDER_KEYS = {"", "gemini_api_key", "placeholder", "your-api-key-here"}
@@ -218,7 +254,7 @@ def _resolve_gemini_key(api_key, key_file):
     return raw
 
 
-class GeminiDriver:
+class GeminiDriver(_TransientRetry):
     """Gemini generateContent client with the same cap discipline."""
 
     def __init__(
@@ -229,6 +265,7 @@ class GeminiDriver:
         cost_cap_usd: float = 2.0,
         prices: dict | None = None,
         timeout: int = 120,
+        retry_delays: tuple | None = None,
         key_file: str | None = None,
     ):
         self.model = model or os.environ.get("SWE_AGENT_MODEL", GEMINI_DEFAULT_MODEL)
@@ -237,6 +274,7 @@ class GeminiDriver:
         self.cost_cap_usd = cost_cap_usd
         self.prices = prices if prices is not None else dict(PRICES)
         self.timeout = timeout
+        self.retry_delays = retry_delays or (5.0, 15.0)
         self._calls = 0
         self._spent = 0.0
         self._input_tokens = 0
@@ -317,8 +355,8 @@ class GeminiDriver:
             return None
         return (in_tokens * price["input"] + out_tokens * price["output"]) / 1_000_000
 
-    def _send(self, body: bytes) -> tuple[int, bytes]:
-        """The HTTP boundary; the only thing offline tests need to stub."""
+    def _send_once(self, body: bytes) -> tuple[int, bytes]:
+        """One HTTP attempt; the retry loop lives in _TransientRetry."""
         request = urllib.request.Request(
             GEMINI_API_URL.format(model=self.model),
             data=body,
@@ -333,8 +371,8 @@ class GeminiDriver:
                 return resp.status, resp.read()
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read()
-        except (OSError, urllib.error.URLError) as exc:
-            raise DriverError(f"model call failed: {exc}") from exc
+        except (OSError, urllib.error.URLError):
+            raise
 
 
 _OPENROUTER_PLACEHOLDER_KEYS = {
@@ -364,7 +402,7 @@ def _resolve_openrouter_key(api_key, key_file):
     return raw
 
 
-class OpenRouterDriver:
+class OpenRouterDriver(_TransientRetry):
     """OpenRouter chat-completions client with the same cap discipline.
 
     Cap accounting is response-reported: usage.cost in credits is the
@@ -381,6 +419,7 @@ class OpenRouterDriver:
         cost_cap_usd: float = 2.0,
         prices: dict | None = None,
         timeout: int = 120,
+        retry_delays: tuple | None = None,
         key_file: str | None = None,
     ):
         self.model = model or os.environ.get(
@@ -391,6 +430,7 @@ class OpenRouterDriver:
         self.cost_cap_usd = cost_cap_usd
         self.prices = prices if prices is not None else dict(PRICES)
         self.timeout = timeout
+        self.retry_delays = retry_delays or (5.0, 15.0)
         self._calls = 0
         self._spent = 0.0
         self._input_tokens = 0
@@ -466,8 +506,8 @@ class OpenRouterDriver:
             "cost_estimate": round(self._spent, 6),
         }
 
-    def _send(self, body: bytes) -> tuple[int, bytes]:
-        """The HTTP boundary; the only thing offline tests need to stub."""
+    def _send_once(self, body: bytes) -> tuple[int, bytes]:
+        """One HTTP attempt; the retry loop lives in _TransientRetry."""
         request = urllib.request.Request(
             OPENROUTER_API_URL,
             data=body,
@@ -483,5 +523,5 @@ class OpenRouterDriver:
                 return resp.status, resp.read()
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read()
-        except (OSError, urllib.error.URLError) as exc:
-            raise DriverError(f"model call failed: {exc}") from exc
+        except (OSError, urllib.error.URLError):
+            raise
