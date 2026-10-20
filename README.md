@@ -204,7 +204,7 @@ python agent.py cloned         # List cloned repos in /tmp
 python agent.py clone <repo>   # Clone a specific repo
 python agent.py clone-all      # Clone every repo the agent knows about
 python agent.py capabilities   # Show agent capabilities
-python agent.py task '<json>'  # Run one task (read, write, test, pr, search, solve)
+python agent.py task '<json>'  # Run one task (read, write, test, pr, search, diff, lint, solve)
 ```
 
 ## Tasks
@@ -221,12 +221,14 @@ python agent.py task '{"repo": "nope", "operation": "read", "path": "x"}'
 
 | Operation | Needs | Does |
 |-----------|-------|------|
-| read | `path` | Returns the file text from the clone |
+| read | `path`, or up to 8 `paths` | Returns the file text from the clone, single file or joined multi-file view |
 | write | `path`, string `content` | Writes the file into the clone, uncommitted |
 | test | nothing | Runs the repo's own test command |
 | pr | `branch`, `message`, `"confirm": true` | Commits the working tree on a new branch, pushes, opens a PR |
 | search | `pattern` | git grep inside the clone, returns line matches |
-| solve | `instruction`, or `issue` plus a model key | Model loop over view, search, edit, test; ends with a diff. Never pushes |
+| diff | nothing | git diff of the clone's uncommitted work |
+| lint | nothing | ruff over the clone's Python files |
+| solve | `instruction`, or `issue` plus a model key | Model loop over view, search, edit, diff, lint, test; ends with a diff. Never pushes |
 
 Rules that hold for every operation:
 
@@ -253,8 +255,11 @@ python agent.py task '{"repo": "calculator", "operation": "solve",
 
 Behavior worth knowing before first use:
 
-- The model can only issue `view`, `search`, `edit`, `test`, and `submit`.
-  There is no shell, no network, and no pull-request command in the loop.
+- The model can only issue `view`, `search`, `edit`, `diff`, `lint`,
+  `test`, and `submit`. `view` takes `path` or up to 8 `paths`. There is
+  no shell, no network, and no pull-request command in the loop.
+- `lint` runs before `submit` is honored; a failing lint sends the loop
+  back to work.
 - `edit` writes a whole file inside the clone; the path guard refuses
   anything escaping it.
 - Turn cap defaults to 10 (hard ceiling 50), the cost cap defaults to 2 USD
@@ -263,6 +268,30 @@ Behavior worth knowing before first use:
 - Every turn goes to a JSONL transcript under
   `/tmp/coccinella-labs/transcripts/<repo>/` for auditing.
 - Costs are rough estimates used only for the cap, never billing figures.
+
+## Sandbox
+
+Operation execution goes through a `SandboxExecutor` seam. The default is
+`local`, which runs the ops as ordinary subprocesses on the host:
+
+```bash
+export SWE_AGENT_SANDBOX=local    # default; plain subprocess execution
+```
+
+Setting `docker` selects the containerized executor: each op runs inside
+the sandbox image (`coccinella-labs/swe-agent-sandbox`, built from
+`docker/sandbox.Dockerfile`) with `--network none`, `--cap-drop ALL`,
+`--read-only` except `/tmp`, resource ceilings, and uid 1001. The daemon
+and the model key stay on the host; the container executes code only,
+so nothing inside it can touch GitHub or the key.
+
+Selection is fail-closed: a `docker` request that the machine cannot
+honor produces an error result, never a silent fallback to local. The
+image carries exactly python 3.12, git, pytest 9.1.1, and ruff 0.17.1;
+anything else fails closed for lack of the dependency instead of
+installing it from the network the container does not have. See
+`docs/sandbox-design.md` for the design and `docs/sandbox-smoke.md`
+for the build-and-probe procedure.
 
 ## Examples
 

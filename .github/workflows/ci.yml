@@ -7,6 +7,29 @@ on:
     branches: [main]
 
 jobs:
+  sandbox-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the sandbox image
+        run: docker build -f docker/sandbox.Dockerfile -t coccinella-labs/swe-agent-sandbox:smoke .
+
+      - name: Smoke the container contract
+        run: |
+          docker run --rm \
+            --network none \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --read-only \
+            --tmpfs /tmp:rw,size=512m \
+            --user 1001:1001 \
+            --memory 4g --memory-swap 4g \
+            --cpus 2 --pids-limit 256 \
+            -v "$PWD:/work:rw" -w /work \
+            coccinella-labs/swe-agent-sandbox:smoke \
+            ruff check .
+
   lint:
     runs-on: ubuntu-latest
     steps:
