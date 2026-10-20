@@ -45,8 +45,14 @@ def test_caps_held_by_workflow_env():
 def test_solve_step_exports_gh_token_for_the_issue_fetch():
     # _fetch_issue_brief shells out to gh issue view; without a token
     # export the runner's gh call fails and the solve dies before any
-    # model call (recorded in run 39356118027 on issue #2, 2026-10-20).
-    assert "GH_TOKEN: ${{ github.token }}" in TEXT
+    # model call (recorded in runs 39356118027 and 39357533789 on
+    # issue #2, 2026-10-20: the second after PR #14 regressed the
+    # export, caught only because the text contract asserted the
+    # string repo-wide while other steps still carried it.
+    # Scope the assertion to the solve step so that cannot recur.)
+    solve = TEXT.split("- name: Solve inside the sandbox", 1)[1]
+    solve = solve.split("- name: Collect the diff", 1)[0]
+    assert "GH_TOKEN: ${{ github.token }}" in solve
 
 
 def test_image_built_per_run():
