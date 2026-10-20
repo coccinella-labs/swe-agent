@@ -106,6 +106,14 @@ def test_refs_template_present_and_no_closing_keywords():
         assert keyword not in lowered
 
 
+def test_post_steps_run_even_when_the_job_fails():
+    # run 39360267166 (issue #2, 2026-10-20): the job failed inside the
+    # solve step, the failure report and label consumption were skipped,
+    # and the label stayed attached; their gates must carry always()
+    assert "always() && steps.outcome.outputs.status" in TEXT
+    assert "always() && steps.gate.outputs.aborted" in TEXT
+
+
 def test_write_surface_is_branch_draft_pr_and_comments_only():
     assert "--draft" in TEXT
     assert "x-access-token" in TEXT

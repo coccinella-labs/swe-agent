@@ -109,14 +109,14 @@ jobs:
           fi
 
       - name: Report a failed run on the issue
-        if: steps.outcome.outputs.status != 'ok' && steps.gate.outputs.aborted != 'true'
+        if: always() && steps.outcome.outputs.status != 'ok' && steps.gate.outputs.aborted != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue comment "${{ github.event.issue.number }}" --body "The ai-fix run could not produce a patch; see this run's log and the evidence artifact. Refs #${{ github.event.issue.number }}."
 
       - name: Push the branch and open the draft PR
-        if: steps.outcome.outputs.status == 'ok'
+        if: always() && steps.outcome.outputs.status == 'ok'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -136,13 +136,13 @@ jobs:
           } > /tmp/ai-fix/comment.md
 
       - name: Post the run summary on the issue
-        if: steps.outcome.outputs.status == 'ok'
+        if: always() && steps.outcome.outputs.status == 'ok'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh issue comment "${{ github.event.issue.number }}" --body "$(cat /tmp/ai-fix/comment.md)"
 
       - name: Consume the ai-fix label with a re-run on re-add
-        if: steps.gate.outputs.aborted != 'true'
+        if: always() && steps.gate.outputs.aborted != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh issue edit "${{ github.event.issue.number }}" --remove-label ai-fix

@@ -382,6 +382,7 @@ class SWEAgent:
             return self._task_error(task, "search needs a string 'pattern'")
         result = self.executor.run(
             ["git", "-C", str(clone), "grep", "-n", "-I", "--", pattern],
+            cwd=clone,
             timeout=60,
         )
         if result.returncode not in (0, 1):
@@ -837,7 +838,15 @@ class SWEAgent:
                     "data": data,
                 }
             if action:
-                observation = self._observe(clone, task, action)
+                try:
+                    observation = self._observe(clone, task, action)
+                except Exception as exc:  # noqa: BLE001
+                    # an op crash must never kill the loop or the run;
+                    # the model sees the failure and can try a
+                    # different command
+                    observation = (
+                        f"error: internal failure while running the command: {exc}"
+                    )
             lines.append(
                 {
                     "turn": turn,
