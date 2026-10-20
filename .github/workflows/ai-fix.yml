@@ -53,9 +53,10 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GH_TOKEN: ${{ github.token }}
-          SWE_AGENT_PROVIDER: gemini
-          SWE_AGENT_MODEL: gemini-3.8-flash
+          SWE_AGENT_PROVIDER: openrouter
+          SWE_AGENT_MODEL: openrouter/auto
           SWE_AGENT_SANDBOX: docker
           SWE_AGENT_MAX_TURNS: "15"
           SWE_AGENT_COST_CAP_USD: "1.5"
@@ -76,8 +77,9 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          for name in ANTHROPIC_API_KEY GEMINI_API_KEY; do
+          for name in ANTHROPIC_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY; do
             KEY8="${!name:0:8}"
             if [ -n "$KEY8" ] && grep -rqF -- "$KEY8" /tmp/coccinella-labs/transcripts /tmp/ai-fix 2>/dev/null; then
               echo "the $name key leaked into the artifacts; failing the run"

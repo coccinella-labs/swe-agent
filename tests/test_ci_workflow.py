@@ -62,19 +62,27 @@ def test_image_built_per_run():
 def test_model_key_comes_only_from_the_secret():
     assert "${{ secrets.ANTHROPIC_API_KEY }}" in TEXT
     found = set(re.findall(r"secrets\.\w+", TEXT))
-    assert found == {"secrets.ANTHROPIC_API_KEY", "secrets.GEMINI_API_KEY"}
+    assert found == {
+        "secrets.ANTHROPIC_API_KEY",
+        "secrets.GEMINI_API_KEY",
+        "secrets.OPENROUTER_API_KEY",
+    }
 
 
-def test_gemini_provider_temporarily_selected_with_its_key():
-    # Interim posture 2026-10-20 while the Anthropic console account
-    # has no API credit balance: the solve runs on gemini-3.8-flash
-    # with its own secret. Reverts to the anthropic default when
-    # credits land; the fallback lane decision remains open.
-    assert "SWE_AGENT_PROVIDER: gemini" in TEXT
-    assert "SWE_AGENT_MODEL: gemini-3.8-flash" in TEXT
-    assert "GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}" in TEXT
+def test_openrouter_interim_posture_selected_with_its_key():
+    # Interim posture, second leg 2026-10-20: gemini-3.8-flash stalled
+    # the label runs twice on vendor-side transient errors (run 4 HTTP
+    # 503, run 5 read timeout), so the solve moved to openrouter/auto
+    # per design section 9.3 question 2; reverts to the anthropic
+    # default when console credits land.
+    assert "SWE_AGENT_PROVIDER: openrouter" in TEXT
+    assert "SWE_AGENT_MODEL: openrouter/auto" in TEXT
+    assert "OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in TEXT
     solve = TEXT[TEXT.index("Solve inside the sandbox") :]
-    assert "GEMINI_API_KEY" in solve.split("- name: Scan the artifacts")[0]
+    solve = solve[: solve.index("- name: Collect the diff")]
+    assert "GH_TOKEN: ${{ github.token }}" in solve
+    for key in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
+        assert key + ": ${{ secrets." + key + " }}" in solve
 
 
 def test_sandbox_carries_no_key_in_its_arguments():
@@ -87,7 +95,7 @@ def test_sandbox_carries_no_key_in_its_arguments():
 
 def test_transcript_key_prefix_scan_present():
     # the scan loops over both provider keys with the same prefix rule
-    assert "for name in ANTHROPIC_API_KEY GEMINI_API_KEY" in TEXT
+    assert "for name in ANTHROPIC_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY" in TEXT
     assert "${!name:0:8}" in TEXT
 
 
