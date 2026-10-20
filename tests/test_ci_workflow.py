@@ -42,6 +42,13 @@ def test_caps_held_by_workflow_env():
     assert "SWE_AGENT_SANDBOX: docker" in TEXT
 
 
+def test_solve_step_exports_gh_token_for_the_issue_fetch():
+    # _fetch_issue_brief shells out to gh issue view; without a token
+    # export the runner's gh call fails and the solve dies before any
+    # model call (recorded in run 39356118027 on issue #2, 2026-10-20).
+    assert "GH_TOKEN: ${{ github.token }}" in TEXT
+
+
 def test_image_built_per_run():
     assert "docker build -f docker/sandbox.Dockerfile" in TEXT
 

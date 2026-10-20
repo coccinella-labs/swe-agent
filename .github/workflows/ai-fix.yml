@@ -52,6 +52,7 @@ jobs:
       - name: Solve inside the sandbox; ceilings hold regardless of task input
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
           SWE_AGENT_SANDBOX: docker
           SWE_AGENT_MAX_TURNS: "15"
           SWE_AGENT_COST_CAP_USD: "1.5"
