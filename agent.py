@@ -569,7 +569,7 @@ class SWEAgent:
             )
         return cls(
             model=task.get("model"),
-            max_output_tokens=task.get("max_output_tokens", 2048),
+            max_output_tokens=task.get("max_output_tokens"),
             cost_cap_usd=task.get("cost_cap_usd", 2.0),
         )
 

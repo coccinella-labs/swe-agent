@@ -255,11 +255,11 @@ python agent.py task '{"repo": "calculator", "operation": "solve",
 
 ### Choosing the provider
 
-Two engines sit behind the same loop, selected by environment only
+Three engines sit behind the same loop, selected by environment only
 (never by the task JSON):
 
 ```bash
-export SWE_AGENT_PROVIDER=gemini     # anthropic (default) or gemini
+export SWE_AGENT_PROVIDER=gemini     # anthropic (default), gemini, openrouter
 export GEMINI_API_KEY=...            # or a mode-0600 keyfile (see below)
 ```
 
@@ -271,6 +271,20 @@ export GEMINI_API_KEY=...            # or a mode-0600 keyfile (see below)
   strings are refused before any run.
 - Cap accounting for Gemini treats thought tokens as output tokens,
   matching the published output price that includes thinking tokens.
+
+The `openrouter` engine runs `openrouter/auto`, the dynamic router:
+
+```bash
+export SWE_AGENT_PROVIDER=openrouter
+export OPENROUTER_API_KEY=...        # or /tmp/coccinella-labs/openrouter_key
+```
+
+- Cap accounting is response-reported: the run charges what OpenRouter's
+  response itself reports (`usage.cost`, credits comparable to dollars),
+  and a response without a cost fails closed; the actually routed model
+  is recorded in the run summary as `routed_model`.
+- `max_output_tokens` defaults to 4096 here because routed thinking
+  models can spend the whole output budget reasoning before any text.
 
 Behavior worth knowing before first use:
 
